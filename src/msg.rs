@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::expiration::Expiration;
 use crate::mint_run::{MintRunInfo, SerialNumber};
+use crate::permit::NftPermissions;
 use crate::royalties::{DisplayRoyaltyInfo, RoyaltyInfo};
 use crate::token::{Extension, Metadata};
 
@@ -825,7 +826,7 @@ pub enum QueryMsg {
     /// perform queries by passing permits instead of viewing keys
     WithPermit {
         /// permit used to verify querier identity
-        permit: Permit,
+        permit: Permit<NftPermissions>,
         /// query to perform
         query: QueryWithPermit,
     },

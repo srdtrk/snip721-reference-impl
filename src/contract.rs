@@ -16,7 +16,6 @@ use secret_toolkit::{
     viewing_key::{ViewingKey, ViewingKeyStore},
 };
 
-use crate::expiration::Expiration;
 use crate::inventory::{Inventory, InventoryIter};
 use crate::mint_run::{SerialNumber, StoredMintRunInfo};
 use crate::msg::{
@@ -35,6 +34,7 @@ use crate::state::{
     PREFIX_REVOKED_PERMITS, PREFIX_ROYALTY_INFO, VIEWING_KEY_ERR_MSG,
 };
 use crate::token::{Metadata, Token};
+use crate::{expiration::Expiration, permit::NftPermissions};
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
 /// response size
@@ -1856,7 +1856,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 pub fn permit_queries(
     deps: Deps,
     block: &BlockInfo,
-    permit: Permit,
+    permit: Permit<NftPermissions>,
     query: QueryWithPermit,
 ) -> StdResult<Binary> {
     // Validate permit content
@@ -1874,7 +1874,7 @@ pub fn permit_queries(
             )?)?
             .as_str(),
     )?;
-    if !permit.check_permission(&secret_toolkit::permit::TokenPermissions::Owner) {
+    if !permit.check_permission(&NftPermissions::Owner) {
         return Err(StdError::generic_err(format!(
             "Owner permission is required for SNIP-721 queries, got permissions {:?}",
             permit.params.permissions
