@@ -16,7 +16,6 @@ use secret_toolkit::{
     viewing_key::{ViewingKey, ViewingKeyStore},
 };
 
-use crate::inventory::{Inventory, InventoryIter};
 use crate::mint_run::{SerialNumber, StoredMintRunInfo};
 use crate::msg::{
     AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse,
@@ -35,6 +34,10 @@ use crate::state::{
 };
 use crate::token::{Metadata, Token};
 use crate::{expiration::Expiration, permit::NftPermissions};
+use crate::{
+    inventory::{Inventory, InventoryIter},
+    permit::check_nft_permission,
+};
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
 /// response size
@@ -1886,7 +1889,20 @@ pub fn permit_queries(
             query_royalty(deps, block, token_id.as_deref(), None, Some(querier))
         }
         QueryWithPermit::PrivateMetadata { token_id } => {
-            query_private_meta(deps, block, &token_id, None, Some(querier))
+            if check_nft_permission(&permit, &NftPermissions::Owner)
+                || check_nft_permission(&permit, &NftPermissions::Metadata)
+                || check_nft_permission(
+                    &permit,
+                    &NftPermissions::MetadataOf(vec![token_id.clone()]),
+                )
+            {
+                query_private_meta(deps, block, &token_id, None, Some(querier))
+            } else {
+                return Err(StdError::generic_err(format!(
+                    "Owner or Metadata permissions are required for SNIP-721 queries, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
         }
         QueryWithPermit::NftDossier {
             token_id,
