@@ -4,6 +4,7 @@ pub mod expiration;
 mod inventory;
 pub mod mint_run;
 pub mod msg;
+pub mod permit;
 pub mod receiver;
 pub mod royalties;
 pub mod state;
