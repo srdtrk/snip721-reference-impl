@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum NftPermissions {
     /// Balance for SNIP-721 - Permission to query all nft balance of the permit creator
-    Balance,
+    ViewOwner,
     /// Balances of listed token_ids for SNIP-721
     /// Permission to query the nft balances of the given token_ids as the permit creator
-    BalanceOf(Vec<String>),
+    ViewOwnerOf(Vec<String>),
     /// History for SNIP-721 - Permission to query transfer_history & transaction_history
     History,
     /// Metadata for SNIP-721 - Permission to query private metadata of all NFTs owned by the permit creator
@@ -31,12 +31,12 @@ pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPer
     let permit_permissions: &Vec<NftPermissions> = &permit.params.permissions;
 
     match permission {
-        NftPermissions::BalanceOf(token_ids) => {
+        NftPermissions::ViewOwnerOf(token_ids) => {
             return permit_permissions.iter().any(|permit_permission| {
-                if let NftPermissions::BalanceOf(permitted_ids) = permit_permission {
+                if let NftPermissions::ViewOwnerOf(permitted_ids) = permit_permission {
                     token_ids.iter().all(|id| permitted_ids.contains(id))
                 } else {
-                    false
+                    permit_permission == &NftPermissions::ViewOwner
                 }
             });
         }
@@ -45,7 +45,7 @@ pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPer
                 if let NftPermissions::MetadataOf(permitted_ids) = permit_permission {
                     token_ids.iter().all(|id| permitted_ids.contains(id))
                 } else {
-                    false
+                    permit_permission == &NftPermissions::Metadata
                 }
             });
         }
