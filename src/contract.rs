@@ -2034,7 +2034,24 @@ pub fn permit_queries(
             )
         }
         QueryWithPermit::NumTokensOfOwner { owner } => {
-            query_num_owner_tokens(deps, block, &owner, None, None, Some(querier), todo!())
+            let restricted_list: Option<Vec<String>> = check_view_owner_restriction(&permit);
+            if let Some(list) = &restricted_list {
+                if list.is_empty() {
+                    return Err(StdError::generic_err(format!(
+                        "Owner or ViewOwner permissions are required for this SNIP-721 query, got permissions {:?}",
+                        permit.params.permissions
+                    )));
+                }
+            }
+            query_num_owner_tokens(
+                deps,
+                block,
+                &owner,
+                None,
+                None,
+                Some(querier),
+                restricted_list,
+            )
         }
     }
 }
