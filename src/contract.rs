@@ -1955,6 +1955,12 @@ pub fn permit_queries(
             query_verify_approval(deps, block, token_ids, None, Some(querier))
         }
         QueryWithPermit::TransactionHistory { page, page_size } => {
+            if !check_nft_permission(&permit, &NftPermissions::History) {
+                return Err(StdError::generic_err(format!(
+                    "Owner or History permissions are required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_transactions(deps, None, page, page_size, Some(querier))
         }
         QueryWithPermit::NumTokens {} => query_num_tokens(deps, None, Some(querier)),
