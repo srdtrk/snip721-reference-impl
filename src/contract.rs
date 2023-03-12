@@ -1797,6 +1797,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             start_after.as_deref(),
             limit,
             None,
+            None,
         ),
         QueryMsg::NumTokensOfOwner {
             owner,
@@ -2015,6 +2016,7 @@ pub fn permit_queries(
             start_after.as_deref(),
             limit,
             Some(querier),
+            todo!(),
         ),
         QueryWithPermit::NumTokensOfOwner { owner } => {
             query_num_owner_tokens(deps, block, &owner, None, None, Some(querier))
@@ -2655,6 +2657,8 @@ pub fn query_approved_for_all(
 ///                   lexicographical order
 /// * `limit` - optional max number of tokens to display
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 #[allow(clippy::too_many_arguments)]
 pub fn query_tokens(
     deps: Deps,
@@ -2665,6 +2669,7 @@ pub fn query_tokens(
     start_after: Option<&str>,
     limit: Option<u32>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let owner_addr = deps.api.addr_validate(owner)?;
     let owner_raw = deps.api.addr_canonicalize(owner_addr.as_str())?;
@@ -2805,12 +2810,25 @@ pub fn query_tokens(
                 }
             }
             if list_it {
-                tokens.push(id);
-                // it'll hit the gas ceiling before overflowing the count
-                count += 1;
-                // exit if we hit the limit
-                if count >= cut_off {
-                    break;
+                // take intersection with restricted list from permit
+                if let Some(restricted_list) = &tokens_approved_by_permit {
+                    if restricted_list.contains(&id) {
+                        tokens.push(id);
+                        // it'll hit the gas ceiling before overflowing the count
+                        count += 1;
+                        // exit if we hit the limit
+                        if count >= cut_off {
+                            break;
+                        }
+                    }
+                } else {
+                    tokens.push(id);
+                    // it'll hit the gas ceiling before overflowing the count
+                    count += 1;
+                    // exit if we hit the limit
+                    if count >= cut_off {
+                        break;
+                    }
                 }
             }
         }
