@@ -1949,9 +1949,21 @@ pub fn permit_queries(
             }
         }
         QueryWithPermit::InventoryApprovals { include_expired } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_inventory_approvals(deps, block, None, include_expired, Some(querier))
         }
         QueryWithPermit::VerifyTransferApproval { token_ids } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_verify_approval(deps, block, token_ids, None, Some(querier))
         }
         QueryWithPermit::TransactionHistory { page, page_size } => {
