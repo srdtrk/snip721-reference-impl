@@ -1963,15 +1963,43 @@ pub fn permit_queries(
             }
             query_transactions(deps, None, page, page_size, Some(querier))
         }
-        QueryWithPermit::NumTokens {} => query_num_tokens(deps, None, Some(querier)),
+        QueryWithPermit::NumTokens {} => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+            query_num_tokens(deps, None, Some(querier))
+        }
         QueryWithPermit::AllTokens { start_after, limit } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_all_tokens(deps, None, start_after.as_deref(), limit, Some(querier))
         }
         QueryWithPermit::TokenApprovals {
             token_id,
             include_expired,
-        } => query_token_approvals(deps, block, &token_id, None, include_expired, Some(querier)),
+        } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+            query_token_approvals(deps, block, &token_id, None, include_expired, Some(querier))
+        }
         QueryWithPermit::ApprovedForAll { include_expired } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_approved_for_all(deps, block, None, None, include_expired, Some(querier))
         }
         QueryWithPermit::Tokens {
