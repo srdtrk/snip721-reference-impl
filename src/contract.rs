@@ -1877,19 +1877,20 @@ pub fn permit_queries(
             )?)?
             .as_str(),
     )?;
-    if !permit.check_permission(&NftPermissions::Owner) {
-        return Err(StdError::generic_err(format!(
-            "Owner permission is required for SNIP-721 queries, got permissions {:?}",
-            permit.params.permissions
-        )));
-    }
+    let has_owner_permission = permit.check_permission(&NftPermissions::Owner);
     // permit validated, process query
     match query {
         QueryWithPermit::RoyaltyInfo { token_id } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_royalty(deps, block, token_id.as_deref(), None, Some(querier))
         }
         QueryWithPermit::PrivateMetadata { token_id } => {
-            if check_nft_permission(&permit, &NftPermissions::Owner)
+            if has_owner_permission
                 || check_nft_permission(
                     &permit,
                     &NftPermissions::MetadataOf(vec![token_id.clone()]),
@@ -1915,7 +1916,7 @@ pub fn permit_queries(
             token_id,
             include_expired,
         } => {
-            if check_nft_permission(&permit, &NftPermissions::Owner)
+            if has_owner_permission
                 || check_nft_permission(
                     &permit,
                     &NftPermissions::ViewOwnerOf(vec![token_id.clone()]),
@@ -1933,7 +1934,7 @@ pub fn permit_queries(
             token_id,
             include_expired,
         } => {
-            if check_nft_permission(&permit, &NftPermissions::Owner)
+            if has_owner_permission
                 || check_nft_permission(
                     &permit,
                     &NftPermissions::ViewOwnerOf(vec![token_id.clone()]),
