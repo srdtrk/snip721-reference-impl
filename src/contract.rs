@@ -1890,7 +1890,6 @@ pub fn permit_queries(
         }
         QueryWithPermit::PrivateMetadata { token_id } => {
             if check_nft_permission(&permit, &NftPermissions::Owner)
-                || check_nft_permission(&permit, &NftPermissions::Metadata)
                 || check_nft_permission(
                     &permit,
                     &NftPermissions::MetadataOf(vec![token_id.clone()]),
@@ -1899,7 +1898,7 @@ pub fn permit_queries(
                 query_private_meta(deps, block, &token_id, None, Some(querier))
             } else {
                 return Err(StdError::generic_err(format!(
-                    "Owner or Metadata permissions are required for SNIP-721 queries, got permissions {:?}",
+                    "Owner or Metadata permissions are required for this SNIP-721 query, got permissions {:?}",
                     permit.params.permissions
                 )));
             }
@@ -1915,7 +1914,21 @@ pub fn permit_queries(
         QueryWithPermit::OwnerOf {
             token_id,
             include_expired,
-        } => query_owner_of(deps, block, &token_id, None, include_expired, Some(querier)),
+        } => {
+            if check_nft_permission(&permit, &NftPermissions::Owner)
+                || check_nft_permission(
+                    &permit,
+                    &NftPermissions::ViewOwnerOf(vec![token_id.clone()]),
+                )
+            {
+                query_owner_of(deps, block, &token_id, None, include_expired, Some(querier))
+            } else {
+                return Err(StdError::generic_err(format!(
+                    "Owner or ViewOwner permissions are required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+        }
         QueryWithPermit::AllNftInfo {
             token_id,
             include_expired,
