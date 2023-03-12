@@ -2953,7 +2953,7 @@ pub fn query_num_owner_tokens(
     }
     // if it is either the owner, ownership is public, or the querier has inventory-wide view owner permission,
     // let them see the full count
-    if known_pass {
+    if known_pass && tokens_approved_by_permit.is_none() {
         return to_binary(&QueryAnswer::NumTokens { count: own_inv.cnt });
     }
 
@@ -2973,24 +2973,49 @@ pub fn query_num_owner_tokens(
         }
     }
     // check if the the token permissions have expired, and if not include it in the count
+    let map2id = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MAP_TO_ID);
     let info_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_INFOS);
     let mut count = 0u32;
     for idx in token_idxs.into_iter() {
         if let Some(token) = json_may_load::<Token>(&info_store, &idx.to_le_bytes())? {
-            found_one = only_public;
-            for perm in token.permissions.iter() {
-                if perm.address == *sender || perm.address == global_raw {
-                    if let Some(exp) = perm.expirations[exp_idx] {
-                        if !exp.is_expired(block) {
-                            count += 1;
-                            break;
+            if let Some(restricted_list) = &tokens_approved_by_permit {
+                if let Some(id) = may_load::<String>(&map2id, &idx.to_le_bytes())? {
+                    if restricted_list.contains(&id) {
+                        found_one = only_public;
+                        for perm in token.permissions.iter() {
+                            if perm.address == *sender || perm.address == global_raw {
+                                if let Some(exp) = perm.expirations[exp_idx] {
+                                    if !exp.is_expired(block) {
+                                        count += 1;
+                                        break;
+                                    }
+                                }
+                                // we can quit if we found both the sender and the global (or if only searching for public)
+                                if found_one {
+                                    break;
+                                } else {
+                                    found_one = true;
+                                }
+                            }
                         }
                     }
-                    // we can quit if we found both the sender and the global (or if only searching for public)
-                    if found_one {
-                        break;
-                    } else {
-                        found_one = true;
+                }
+            } else {
+                found_one = only_public;
+                for perm in token.permissions.iter() {
+                    if perm.address == *sender || perm.address == global_raw {
+                        if let Some(exp) = perm.expirations[exp_idx] {
+                            if !exp.is_expired(block) {
+                                count += 1;
+                                break;
+                            }
+                        }
+                        // we can quit if we found both the sender and the global (or if only searching for public)
+                        if found_one {
+                            break;
+                        } else {
+                            found_one = true;
+                        }
                     }
                 }
             }
