@@ -1813,6 +1813,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             viewer.as_deref(),
             viewing_key.as_deref(),
             None,
+            None,
         ),
         QueryMsg::VerifyTransferApproval {
             token_ids,
@@ -2033,7 +2034,7 @@ pub fn permit_queries(
             )
         }
         QueryWithPermit::NumTokensOfOwner { owner } => {
-            query_num_owner_tokens(deps, block, &owner, None, None, Some(querier))
+            query_num_owner_tokens(deps, block, &owner, None, None, Some(querier), todo!())
         }
     }
 }
@@ -2861,6 +2862,8 @@ pub fn query_tokens(
 /// * `viewer` - optional address of the querier if different from the owner
 /// * `viewing_key` - optional viewing key String
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 pub fn query_num_owner_tokens(
     deps: Deps,
     block: &BlockInfo,
@@ -2868,6 +2871,7 @@ pub fn query_num_owner_tokens(
     viewer: Option<&str>,
     viewing_key: Option<&str>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let owner_addr = deps.api.addr_validate(owner)?;
     let owner_raw = deps.api.addr_canonicalize(owner_addr.as_str())?;
