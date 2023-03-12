@@ -27,6 +27,26 @@ pub enum NftPermissions {
     Owner,
 }
 
+pub fn check_view_owner_restriction(permit: &Permit<NftPermissions>) -> Option<Vec<String>> {
+    let permit_permissions: &Vec<NftPermissions> = &permit.params.permissions;
+    let mut result = vec![];
+    for permission in permit_permissions {
+        match permission {
+            NftPermissions::ViewOwner => {
+                return None;
+            }
+            NftPermissions::ViewOwnerOf(vec) => {
+                result.append(&mut vec.clone());
+            }
+            NftPermissions::History => {}
+            NftPermissions::Metadata => {}
+            NftPermissions::MetadataOf(_) => {}
+            NftPermissions::Owner => return None,
+        }
+    }
+    Some(result)
+}
+
 pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPermissions) -> bool {
     let permit_permissions: &Vec<NftPermissions> = &permit.params.permissions;
 
