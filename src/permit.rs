@@ -36,7 +36,8 @@ pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPer
                 if let NftPermissions::ViewOwnerOf(permitted_ids) = permit_permission {
                     token_ids.iter().all(|id| permitted_ids.contains(id))
                 } else {
-                    permit_permission == &NftPermissions::ViewOwner
+                    (permit_permission == &NftPermissions::ViewOwner)
+                        || (permit_permission == &NftPermissions::Owner)
                 }
             });
         }
@@ -45,10 +46,14 @@ pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPer
                 if let NftPermissions::MetadataOf(permitted_ids) = permit_permission {
                     token_ids.iter().all(|id| permitted_ids.contains(id))
                 } else {
-                    permit_permission == &NftPermissions::Metadata
+                    (permit_permission == &NftPermissions::Metadata)
+                        || (permit_permission == &NftPermissions::Owner)
                 }
             });
         }
-        _ => permit.params.permissions.contains(permission),
+        _ => {
+            permit.params.permissions.contains(permission)
+                || permit.params.permissions.contains(&NftPermissions::Owner)
+        }
     }
 }
