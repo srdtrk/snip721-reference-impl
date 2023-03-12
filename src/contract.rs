@@ -1932,7 +1932,21 @@ pub fn permit_queries(
         QueryWithPermit::AllNftInfo {
             token_id,
             include_expired,
-        } => query_all_nft_info(deps, block, &token_id, None, include_expired, Some(querier)),
+        } => {
+            if check_nft_permission(&permit, &NftPermissions::Owner)
+                || check_nft_permission(
+                    &permit,
+                    &NftPermissions::ViewOwnerOf(vec![token_id.clone()]),
+                )
+            {
+                query_all_nft_info(deps, block, &token_id, None, include_expired, Some(querier))
+            } else {
+                return Err(StdError::generic_err(format!(
+                    "Owner or ViewOwner permissions are required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+        }
         QueryWithPermit::InventoryApprovals { include_expired } => {
             query_inventory_approvals(deps, block, None, include_expired, Some(querier))
         }
