@@ -51,9 +51,8 @@ pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPer
                 }
             });
         }
-        _ => {
-            permit.params.permissions.contains(permission)
-                || permit.params.permissions.contains(&NftPermissions::Owner)
-        }
+        _ => permit.params.permissions.iter().any(|permit_permission| {
+            (permit_permission == permission) || (permit_permission == &NftPermissions::Owner)
+        }),
     }
 }
