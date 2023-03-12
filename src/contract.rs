@@ -1744,12 +1744,28 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             token_id,
             viewer,
             include_expired,
-        } => query_nft_dossier(deps, &env.block, token_id, viewer, include_expired, None),
+        } => query_nft_dossier(
+            deps,
+            &env.block,
+            token_id,
+            viewer,
+            include_expired,
+            None,
+            None,
+        ),
         QueryMsg::BatchNftDossier {
             token_ids,
             viewer,
             include_expired,
-        } => query_batch_nft_dossier(deps, &env.block, token_ids, viewer, include_expired, None),
+        } => query_batch_nft_dossier(
+            deps,
+            &env.block,
+            token_ids,
+            viewer,
+            include_expired,
+            None,
+            None,
+        ),
         QueryMsg::TokenApprovals {
             token_id,
             viewing_key,
@@ -1906,11 +1922,27 @@ pub fn permit_queries(
         QueryWithPermit::NftDossier {
             token_id,
             include_expired,
-        } => query_nft_dossier(deps, block, token_id, None, include_expired, Some(querier)),
+        } => query_nft_dossier(
+            deps,
+            block,
+            token_id,
+            None,
+            include_expired,
+            Some(querier),
+            todo!(),
+        ),
         QueryWithPermit::BatchNftDossier {
             token_ids,
             include_expired,
-        } => query_batch_nft_dossier(deps, block, token_ids, None, include_expired, Some(querier)),
+        } => query_batch_nft_dossier(
+            deps,
+            block,
+            token_ids,
+            None,
+            include_expired,
+            Some(querier),
+            todo!(),
+        ),
         QueryWithPermit::OwnerOf {
             token_id,
             include_expired,
@@ -2408,6 +2440,7 @@ pub fn query_all_nft_info(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `permit_permissions` - optional list of permissions to check for the permit
 pub fn query_nft_dossier(
     deps: Deps,
     block: &BlockInfo,
@@ -2415,6 +2448,7 @@ pub fn query_nft_dossier(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    permit_permissions: Option<Vec<NftPermissions>>,
 ) -> StdResult<Binary> {
     let dossier = dossier_list(
         deps,
@@ -2423,6 +2457,7 @@ pub fn query_nft_dossier(
         viewer,
         include_expired,
         from_permit,
+        permit_permissions,
     )?
     .pop()
     .ok_or_else(|| StdError::generic_err("NftDossier can never return an empty dossier list"))?;
@@ -2458,6 +2493,7 @@ pub fn query_nft_dossier(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `permit_permissions` - optional list of permissions to check for the permit
 pub fn query_batch_nft_dossier(
     deps: Deps,
     block: &BlockInfo,
@@ -2465,8 +2501,17 @@ pub fn query_batch_nft_dossier(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    permit_permissions: Option<Vec<NftPermissions>>,
 ) -> StdResult<Binary> {
-    let nft_dossiers = dossier_list(deps, block, token_ids, viewer, include_expired, from_permit)?;
+    let nft_dossiers = dossier_list(
+        deps,
+        block,
+        token_ids,
+        viewer,
+        include_expired,
+        from_permit,
+        permit_permissions,
+    )?;
 
     to_binary(&QueryAnswer::BatchNftDossier { nft_dossiers })
 }
@@ -4939,6 +4984,7 @@ pub struct OwnerInfo {
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `permit_permissions` - optional list of permissions granted by the permit
 pub fn dossier_list(
     deps: Deps,
     block: &BlockInfo,
@@ -4946,6 +4992,7 @@ pub fn dossier_list(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    permit_permissions: Option<Vec<NftPermissions>>,
 ) -> StdResult<Vec<BatchNftDossierElement>> {
     let viewer_raw = get_querier(deps, viewer, from_permit)?;
     let opt_viewer = viewer_raw.as_ref();
