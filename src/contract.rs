@@ -5121,8 +5121,8 @@ pub fn dossier_list(
         }
 
         // get the owner if permitted
-        let owner = if (global_pass
-            || check_perm_core(
+        let owner = if global_pass
+            || (check_perm_core(
                 deps,
                 block,
                 &token,
@@ -5133,8 +5133,8 @@ pub fn dossier_list(
                 &mut owner_oper_for,
                 &err_msg,
             )
-            .is_ok())
-            && permit_view_owner_permission
+            .is_ok()
+                && permit_view_owner_permission)
         {
             Some(deps.api.addr_humanize(&token.owner)?)
         } else {
