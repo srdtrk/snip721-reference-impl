@@ -16,6 +16,11 @@ use secret_toolkit::{
     viewing_key::{ViewingKey, ViewingKeyStore},
 };
 
+use crate::msg::{
+    AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse,
+    ExecuteAnswer, ExecuteMsg, InstantiateMsg, Mint, QueryAnswer, QueryMsg, QueryWithPermit,
+    ReceiverInfo, ResponseStatus::Success, Send, Snip721Approval, Transfer, ViewerInfo,
+};
 use crate::receiver::{batch_receive_nft_msg, receive_nft_msg};
 use crate::royalties::{RoyaltyInfo, StoredRoyaltyInfo};
 use crate::state::{
@@ -35,15 +40,6 @@ use crate::{
 use crate::{
     mint_run::{SerialNumber, StoredMintRunInfo},
     permit::check_view_owner_restriction,
-};
-use crate::{
-    msg::{
-        AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval,
-        Cw721OwnerOfResponse, ExecuteAnswer, ExecuteMsg, InstantiateMsg, Mint, QueryAnswer,
-        QueryMsg, QueryWithPermit, ReceiverInfo, ResponseStatus::Success, Send, Snip721Approval,
-        Transfer, ViewerInfo,
-    },
-    permit,
 };
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
@@ -1933,7 +1929,7 @@ pub fn permit_queries(
             None,
             include_expired,
             Some(querier),
-            todo!(),
+            Some(&permit),
         ),
         QueryWithPermit::BatchNftDossier {
             token_ids,
@@ -1945,7 +1941,7 @@ pub fn permit_queries(
             None,
             include_expired,
             Some(querier),
-            todo!(),
+            Some(&permit),
         ),
         QueryWithPermit::OwnerOf {
             token_id,
@@ -2444,7 +2440,7 @@ pub fn query_all_nft_info(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
-/// * `permit_permissions` - optional list of permissions to check for the permit
+/// * `permit` - optional reference to a Permit
 pub fn query_nft_dossier(
     deps: Deps,
     block: &BlockInfo,
@@ -2452,7 +2448,7 @@ pub fn query_nft_dossier(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
-    permit_permissions: Option<Vec<NftPermissions>>,
+    permit: Option<&Permit<NftPermissions>>,
 ) -> StdResult<Binary> {
     let dossier = dossier_list(
         deps,
@@ -2461,7 +2457,7 @@ pub fn query_nft_dossier(
         viewer,
         include_expired,
         from_permit,
-        permit_permissions,
+        permit,
     )?
     .pop()
     .ok_or_else(|| StdError::generic_err("NftDossier can never return an empty dossier list"))?;
@@ -2497,7 +2493,7 @@ pub fn query_nft_dossier(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
-/// * `permit_permissions` - optional list of permissions to check for the permit
+/// * `permit` - optional reference to a Permit
 pub fn query_batch_nft_dossier(
     deps: Deps,
     block: &BlockInfo,
@@ -2505,7 +2501,7 @@ pub fn query_batch_nft_dossier(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
-    permit_permissions: Option<Vec<NftPermissions>>,
+    permit: Option<&Permit<NftPermissions>>,
 ) -> StdResult<Binary> {
     let nft_dossiers = dossier_list(
         deps,
@@ -2514,7 +2510,7 @@ pub fn query_batch_nft_dossier(
         viewer,
         include_expired,
         from_permit,
-        permit_permissions,
+        permit,
     )?;
 
     to_binary(&QueryAnswer::BatchNftDossier { nft_dossiers })
@@ -4988,7 +4984,7 @@ pub struct OwnerInfo {
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
-/// * `permit_permissions` - optional list of permissions granted by the permit
+/// * `permit` - optional reference to a Permit
 pub fn dossier_list(
     deps: Deps,
     block: &BlockInfo,
@@ -4996,7 +4992,7 @@ pub fn dossier_list(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
-    permit_permissions: Option<Vec<NftPermissions>>,
+    permit: Option<&Permit<NftPermissions>>,
 ) -> StdResult<Vec<BatchNftDossierElement>> {
     let viewer_raw = get_querier(deps, viewer, from_permit)?;
     let opt_viewer = viewer_raw.as_ref();
@@ -5026,7 +5022,13 @@ pub fn dossier_list(
     let run_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MINT_RUN);
     let all_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_ALL_PERMISSIONS);
 
-    let permit_view_owner_permission: bool = todo!();
+    // check if the permit allows all actions
+    let permit_full_owner_permission: bool = if let Some(permit) = permit {
+        permit.check_permission(&NftPermissions::Owner)
+    } else {
+        // if no permit, then there are no permit restrictions applied
+        true
+    };
     for id in token_ids.into_iter() {
         let err_msg = format!(
             "You are not authorized to perform this action on token {}",
@@ -5105,12 +5107,18 @@ pub fn dossier_list(
             }
         });
         // check all permit permissions:
-        let permit_private_metadata_permission: bool = todo!();
-        let permit_royalty_info_permission: bool = todo!();
-        let permit_mint_run_permission: bool = todo!();
-        let permit_token_approvals_permission: bool = todo!();
-        let permit_inventory_approvals_permission: bool = todo!();
-        let permit_history_permission: bool = todo!();
+        let mut permit_view_owner_permission: bool = true;
+        let mut permit_private_metadata_permission: bool = true;
+        let mut permissions_for_errors: Option<Vec<NftPermissions>> = None;
+        if !permit_full_owner_permission {
+            if let Some(permit) = permit {
+                permit_view_owner_permission =
+                    permit.check_permission(&NftPermissions::ViewOwnerOf(vec![id.clone()]));
+                permit_private_metadata_permission =
+                    permit.check_permission(&NftPermissions::MetadataOf(vec![id.clone()]));
+                permissions_for_errors = Some(permit.params.permissions.clone());
+            }
+        }
 
         // get the owner if permitted
         let owner = if (global_pass
@@ -5137,9 +5145,10 @@ pub fn dossier_list(
         let public_metadata: Option<Metadata> = may_load(&pub_store, &token_key)?;
         // get the private metadata if it is not sealed and if the viewer is permitted
         let mut display_private_metadata_error = None;
-        let private_metadata = if !permit_private_metadata_permission {
+        let private_metadata = if !permit_private_metadata_permission && !private_metadata_is_public
+        {
             display_private_metadata_error = Some(format!(
-                "Owner or Metadata permissions are required for this SNIP-721 query, got permissions {:?}", &permit_permissions
+                "Owner or Metadata permissions are required for this SNIP-721 query, got permissions {:?}", permissions_for_errors
             ));
             None
         } else if let Err(err) = check_perm_core(
@@ -5170,18 +5179,19 @@ pub fn dossier_list(
         let may_roy_inf: Option<StoredRoyaltyInfo> = may_load(&roy_store, &token_key)?;
         let royalty_info = may_roy_inf
             .map(|r| {
-                let hide_addr = check_perm_core(
-                    deps,
-                    block,
-                    &token,
-                    &id,
-                    opt_viewer,
-                    owner_slice,
-                    perm_type_info.transfer_idx,
-                    &mut xfer_oper_for,
-                    &err_msg,
-                )
-                .is_err();
+                let hide_addr = permit_full_owner_permission
+                    && check_perm_core(
+                        deps,
+                        block,
+                        &token,
+                        &id,
+                        opt_viewer,
+                        owner_slice,
+                        perm_type_info.transfer_idx,
+                        &mut xfer_oper_for,
+                        &err_msg,
+                    )
+                    .is_err();
                 r.to_human(deps.api, hide_addr)
             })
             .transpose()?;
@@ -5199,11 +5209,12 @@ pub fn dossier_list(
             // if permit has Owner or Metadata permissions
             // or if metadata is already public
             private_metadata,
-            // public but address may be hidden
+            // public but address be hidden if permit doesn't have Owner permission.
             royalty_info,
             // permit needs owner permission
-            mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?),
-            // public (if token_id doesn't exists it lies)
+            mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?)
+                .filter(|_| permit_full_owner_permission),
+            // public
             transferable: token.transferable,
             // public
             unwrapped: token.unwrapped,
@@ -5218,9 +5229,9 @@ pub fn dossier_list(
             // public
             private_metadata_is_public_expiration,
             // permit needs owner permission
-            token_approvals,
+            token_approvals: token_approvals.filter(|_| permit_full_owner_permission),
             // permit needs owner permission
-            inventory_approvals,
+            inventory_approvals: inventory_approvals.filter(|_| permit_full_owner_permission),
         });
     }
     Ok(dossiers)
