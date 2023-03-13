@@ -16,11 +16,6 @@ use secret_toolkit::{
     viewing_key::{ViewingKey, ViewingKeyStore},
 };
 
-use crate::msg::{
-    AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse,
-    ExecuteAnswer, ExecuteMsg, InstantiateMsg, Mint, QueryAnswer, QueryMsg, QueryWithPermit,
-    ReceiverInfo, ResponseStatus::Success, Send, Snip721Approval, Transfer, ViewerInfo,
-};
 use crate::receiver::{batch_receive_nft_msg, receive_nft_msg};
 use crate::royalties::{RoyaltyInfo, StoredRoyaltyInfo};
 use crate::state::{
@@ -40,6 +35,15 @@ use crate::{
 use crate::{
     mint_run::{SerialNumber, StoredMintRunInfo},
     permit::check_view_owner_restriction,
+};
+use crate::{
+    msg::{
+        AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval,
+        Cw721OwnerOfResponse, ExecuteAnswer, ExecuteMsg, InstantiateMsg, Mint, QueryAnswer,
+        QueryMsg, QueryWithPermit, ReceiverInfo, ResponseStatus::Success, Send, Snip721Approval,
+        Transfer, ViewerInfo,
+    },
+    permit,
 };
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
@@ -5022,6 +5026,7 @@ pub fn dossier_list(
     let run_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MINT_RUN);
     let all_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_ALL_PERMISSIONS);
 
+    let permit_view_owner_permission: bool = todo!();
     for id in token_ids.into_iter() {
         let err_msg = format!(
             "You are not authorized to perform this action on token {}",
@@ -5057,9 +5062,58 @@ pub fn dossier_list(
                 StdError::generic_err("This can't happen since we just pushed an OwnerInfo!")
             })?
         };
+
         let global_pass = owner_inf.owner_is_public;
+        // get the token approvals
+        let (token_approv, token_owner_exp, token_meta_exp) = gen_snip721_approvals(
+            deps.api,
+            block,
+            &mut token.permissions,
+            incl_exp,
+            &perm_type_info,
+        )?;
+        // determine if ownership is public
+        let (public_ownership_expiration, owner_is_public) = if global_pass {
+            (Some(Expiration::Never), true)
+        } else if token_owner_exp.is_some() {
+            (token_owner_exp, true)
+        } else {
+            (
+                owner_inf.view_owner_exp.as_ref().cloned(),
+                owner_inf.view_owner_exp.is_some(),
+            )
+        };
+        // determine if private metadata is public
+        let (private_metadata_is_public_expiration, private_metadata_is_public) =
+            if token_meta_exp.is_some() {
+                (token_meta_exp, true)
+            } else {
+                (
+                    owner_inf.view_meta_exp.as_ref().cloned(),
+                    owner_inf.view_meta_exp.is_some(),
+                )
+            };
+        // if the viewer is the owner, display the approvals
+        let (token_approvals, inventory_approvals) = opt_viewer.map_or((None, None), |v| {
+            if token.owner == *v {
+                (
+                    Some(token_approv),
+                    Some(owner_inf.inventory_approvals.clone()),
+                )
+            } else {
+                (None, None)
+            }
+        });
+        // check all permit permissions:
+        let permit_private_metadata_permission: bool = todo!();
+        let permit_royalty_info_permission: bool = todo!();
+        let permit_mint_run_permission: bool = todo!();
+        let permit_token_approvals_permission: bool = todo!();
+        let permit_inventory_approvals_permission: bool = todo!();
+        let permit_history_permission: bool = todo!();
+
         // get the owner if permitted
-        let owner = if global_pass
+        let owner = if (global_pass
             || check_perm_core(
                 deps,
                 block,
@@ -5071,7 +5125,8 @@ pub fn dossier_list(
                 &mut owner_oper_for,
                 &err_msg,
             )
-            .is_ok()
+            .is_ok())
+            && permit_view_owner_permission
         {
             Some(deps.api.addr_humanize(&token.owner)?)
         } else {
@@ -5082,7 +5137,12 @@ pub fn dossier_list(
         let public_metadata: Option<Metadata> = may_load(&pub_store, &token_key)?;
         // get the private metadata if it is not sealed and if the viewer is permitted
         let mut display_private_metadata_error = None;
-        let private_metadata = if let Err(err) = check_perm_core(
+        let private_metadata = if !permit_private_metadata_permission {
+            display_private_metadata_error = Some(format!(
+                "Owner or Metadata permissions are required for this SNIP-721 query, got permissions {:?}", &permit_permissions
+            ));
+            None
+        } else if let Err(err) = check_perm_core(
             deps,
             block,
             &token,
@@ -5127,61 +5187,39 @@ pub fn dossier_list(
             .transpose()?;
         // get the mint run information
         let mint_run: StoredMintRunInfo = load(&run_store, &token_key)?;
-        // get the token approvals
-        let (token_approv, token_owner_exp, token_meta_exp) = gen_snip721_approvals(
-            deps.api,
-            block,
-            &mut token.permissions,
-            incl_exp,
-            &perm_type_info,
-        )?;
-        // determine if ownership is public
-        let (public_ownership_expiration, owner_is_public) = if global_pass {
-            (Some(Expiration::Never), true)
-        } else if token_owner_exp.is_some() {
-            (token_owner_exp, true)
-        } else {
-            (
-                owner_inf.view_owner_exp.as_ref().cloned(),
-                owner_inf.view_owner_exp.is_some(),
-            )
-        };
-        // determine if private metadata is public
-        let (private_metadata_is_public_expiration, private_metadata_is_public) =
-            if token_meta_exp.is_some() {
-                (token_meta_exp, true)
-            } else {
-                (
-                    owner_inf.view_meta_exp.as_ref().cloned(),
-                    owner_inf.view_meta_exp.is_some(),
-                )
-            };
-        // if the viewer is the owner, display the approvals
-        let (token_approvals, inventory_approvals) = opt_viewer.map_or((None, None), |v| {
-            if token.owner == *v {
-                (
-                    Some(token_approv),
-                    Some(owner_inf.inventory_approvals.clone()),
-                )
-            } else {
-                (None, None)
-            }
-        });
+
         dossiers.push(BatchNftDossierElement {
+            // public when this dossier element is pushed
             token_id: id,
+            // if permit has ViewOwner or Owner permissions
+            // or if ownership is public
             owner,
+            // public
             public_metadata,
+            // if permit has Owner or Metadata permissions
+            // or if metadata is already public
             private_metadata,
+            // public but address may be hidden
             royalty_info,
+            // permit needs owner permission
             mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?),
+            // public (if token_id doesn't exists it lies)
             transferable: token.transferable,
+            // public
             unwrapped: token.unwrapped,
+            // public if applicable
             display_private_metadata_error,
+            // public
             owner_is_public,
+            // public
             public_ownership_expiration,
+            // public
             private_metadata_is_public,
+            // public
             private_metadata_is_public_expiration,
+            // permit needs owner permission
             token_approvals,
+            // permit needs owner permission
             inventory_approvals,
         });
     }
