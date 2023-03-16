@@ -5199,7 +5199,7 @@ pub fn dossier_list(
         let mint_run: StoredMintRunInfo = load(&run_store, &token_key)?;
 
         dossiers.push(BatchNftDossierElement {
-            // public when this dossier element is pushed
+            // public
             token_id: id,
             // if permit has ViewOwner or Owner permissions
             // or if ownership is public
@@ -5211,9 +5211,8 @@ pub fn dossier_list(
             private_metadata,
             // public but address be hidden if permit doesn't have Owner permission.
             royalty_info,
-            // permit needs owner permission
-            mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?)
-                .filter(|_| permit_full_owner_permission),
+            // public
+            mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?),
             // public
             transferable: token.transferable,
             // public
