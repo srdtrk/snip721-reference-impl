@@ -5208,8 +5208,10 @@ pub fn dossier_list(
             public_metadata,
             // if permit has Owner or Metadata permissions
             // or if metadata is already public
+            // and if the metadata is not sealed
             private_metadata,
-            // public but address be hidden if permit doesn't have Owner permission.
+            // public but address be hidden if permit doesn't have Owner permission
+            // or if the creator of the permit does not have the Transfer permission
             royalty_info,
             // public
             mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?),
