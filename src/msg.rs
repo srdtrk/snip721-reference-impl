@@ -904,6 +904,7 @@ pub enum QueryAnswer {
         burn_is_enabled: bool,
         implements_non_transferable_tokens: bool,
         implements_token_subtype: bool,
+        implements_nft_query_permits: bool,
     },
     Minters {
         minters: Vec<Addr>,
