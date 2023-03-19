@@ -2206,6 +2206,7 @@ pub fn query_config(storage: &dyn Storage) -> StdResult<Binary> {
         burn_is_enabled: config.burn_is_enabled,
         implements_non_transferable_tokens: true,
         implements_token_subtype: true,
+        implements_nft_query_permits: true,
     })
 }
 

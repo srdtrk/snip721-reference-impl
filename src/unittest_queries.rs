@@ -153,6 +153,7 @@ mod tests {
                 burn_is_enabled,
                 implements_non_transferable_tokens,
                 implements_token_subtype,
+                implements_nft_query_permits,
             } => {
                 assert!(!token_supply_is_public);
                 assert!(owner_is_public);
@@ -163,6 +164,7 @@ mod tests {
                 assert!(burn_is_enabled);
                 assert!(implements_non_transferable_tokens);
                 assert!(implements_token_subtype);
+                assert!(implements_nft_query_permits);
             }
             _ => panic!("unexpected"),
         }
