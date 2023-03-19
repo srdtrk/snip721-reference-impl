@@ -978,6 +978,9 @@ pub enum QueryAnswer {
     ImplementsTokenSubtype {
         is_enabled: bool,
     },
+    ImplementsNftQueryPermits {
+        is_enabled: bool,
+    },
     VerifyTransferApproval {
         approved_for_all: bool,
         first_unapproved_token: Option<String>,
