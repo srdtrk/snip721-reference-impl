@@ -785,6 +785,8 @@ pub enum QueryMsg {
     ImplementsNonTransferableTokens {},
     /// display that this contract implements the use of the `token_subtype` metadata extension field
     ImplementsTokenSubtype {},
+    /// display that this contract implements the use of the `NftPermissions` for query permits
+    ImplementsNftQueryPermits {},
     /// verify that the specified address has approval to transfer every listed token.
     /// A token will count as unapproved if it is non-transferable
     VerifyTransferApproval {

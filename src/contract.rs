@@ -1850,6 +1850,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::ImplementsTokenSubtype {} => {
             to_binary(&QueryAnswer::ImplementsTokenSubtype { is_enabled: true })
         }
+        QueryMsg::ImplementsNftQueryPermits {} => todo!(),
         QueryMsg::TransactionHistory {
             address,
             viewing_key,
