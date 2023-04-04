@@ -5175,8 +5175,8 @@ pub fn dossier_list(
         let may_roy_inf: Option<StoredRoyaltyInfo> = may_load(&roy_store, &token_key)?;
         let royalty_info = may_roy_inf
             .map(|r| {
-                let hide_addr = permit_full_owner_permission
-                    && check_perm_core(
+                let hide_addr = !permit_full_owner_permission
+                    || check_perm_core(
                         deps,
                         block,
                         &token,
