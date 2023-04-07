@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NftPermissions {
-    /// Balance for SNIP-721 - Permission to query all nft balance of the permit creator
+    /// ViewOwner for SNIP-721 - Permission to query ownership of all nfts of the permit creator
     ViewOwner,
-    /// Balances of listed token_ids for SNIP-721
-    /// Permission to query the nft balances of the given token_ids as the permit creator
+    /// ViewOwner of listed token_ids for SNIP-721
+    /// Permission to query the nft ownership of the given token_ids as the permit creator
     ViewOwnerOf(Vec<String>),
     /// History for SNIP-721 - Permission to query transfer_history & transaction_history
     History,
@@ -27,6 +27,12 @@ pub enum NftPermissions {
     Owner,
 }
 
+/// Returns Option<Vec<String>> of token_ids that the permit creator is allowed to view the owner of
+/// if the permit creator has ViewOwner permission, returns None
+///
+/// # Arguments
+///
+/// * `permit` - the permit used to derive the restrictions from
 pub fn check_view_owner_restriction(permit: &Permit<NftPermissions>) -> Option<Vec<String>> {
     let permit_permissions: &Vec<NftPermissions> = &permit.params.permissions;
     let mut result = vec![];
@@ -47,6 +53,12 @@ pub fn check_view_owner_restriction(permit: &Permit<NftPermissions>) -> Option<V
     Some(result)
 }
 
+/// Returns bool indicating if the permit creator has the given permission
+///
+/// # Arguments
+///
+/// * `permit` - the permit provided by the permit creator
+/// * `permission` - the permission to check for
 pub fn check_nft_permission(permit: &Permit<NftPermissions>, permission: &NftPermissions) -> bool {
     let permit_permissions: &Vec<NftPermissions> = &permit.params.permissions;
 
