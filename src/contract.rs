@@ -2739,7 +2739,7 @@ pub fn query_tokens(
     owner: &str,
     viewer: Option<&str>,
     viewing_key: Option<&str>,
-    start_after: Option<&str>,
+    start_after: Option<&String>,
     limit: Option<u32>,
     from_permit: Option<CanonicalAddr>,
     tokens_approved_by_permit: Option<Vec<String>>,
@@ -2747,10 +2747,14 @@ pub fn query_tokens(
     let owner_addr = deps.api.addr_validate(owner)?;
     let owner_raw = deps.api.addr_canonicalize(owner_addr.as_str())?;
     let cut_off = limit.unwrap_or(30);
-    // determine the querier
+    // determine the querier.  is_owner is only true if the querier is the owner whose inventory is being
+    // queried and if there is full access to that inventory
     let (is_owner, may_querier) = if let Some(pmt) = from_permit.as_ref() {
-        // permit tells you who is querying, so also check if he is the owner
-        (owner_raw == *pmt, from_permit)
+        // only treat a permit querier as the owner if they have unrestricted view_owner privelege
+        (
+            owner_raw == *pmt && tokens_approved_by_permit.is_none(),
+            from_permit,
+        )
         // no permit, so check if a key was provided and who it matches
     } else if let Some(key) = viewing_key {
         // if there is a viewer
@@ -2788,25 +2792,22 @@ pub fn query_tokens(
 
     let querier = may_querier.as_ref();
     // if querier is different than the owner, check if ownership is public
-    let mut may_config: Option<Config> = None;
-    let mut known_pass = if !is_owner {
-        let config: Config = load(deps.storage, CONFIG_KEY)?;
-        let own_priv_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_OWNER_PRIV);
-        let pass: bool = may_load(&own_priv_store, owner_slice)?.unwrap_or(config.owner_is_public);
-        may_config = Some(config);
-        pass
-    } else {
-        true
-    };
+    let config: Config = load(deps.storage, CONFIG_KEY)?;
+    let own_priv_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_OWNER_PRIV);
+    let mut globally_pub_inventory: bool =
+        may_load(&own_priv_store, owner_slice)?.unwrap_or(config.owner_is_public);
     let exp_idx = PermissionType::ViewOwner.to_usize();
+    if !globally_pub_inventory {
+        let all_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_ALL_PERMISSIONS);
+        let all_perm: Vec<Permission> = json_may_load(&all_store, owner_slice)?.unwrap_or_default();
+        globally_pub_inventory = is_globally_public(&all_perm, exp_idx, block);
+    }
     let info_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_INFOS);
     let mut list_it: bool;
     let mut oper_for: Vec<CanonicalAddr> = Vec::new();
     let mut tokens: Vec<String> = Vec::new();
     let map2id = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MAP_TO_ID);
     let mut inv_iter = if let Some(after) = start_after {
-        // load the config if we haven't already
-        let config = may_config.map_or_else(|| load::<Config>(deps.storage, CONFIG_KEY), Ok)?;
         // if the querier is allowed to view all of the owner's tokens, let them know if the token
         // does not belong to the owner
         let inv_err = format!("Token ID: {} is not in the specified inventory", after);
@@ -2819,8 +2820,10 @@ pub fn query_tokens(
         // if token supply is public let them know if the token id does not exist
         let not_found_err = if config.token_supply_is_public {
             &public_err
-        } else if known_pass {
+        // if there is permission to the owner's entire inventory, just say he doesn't own it if it does not exist
+        } else if is_owner || globally_pub_inventory {
             &inv_err
+        // wasn't granted ownership viewing permission for the owner's inventory
         } else {
             &unauth_err
         };
@@ -2828,29 +2831,36 @@ pub fn query_tokens(
         let idx: u32 = may_load(&map2idx, after.as_bytes())?
             .ok_or_else(|| StdError::generic_err(not_found_err))?;
         // make sure querier is allowed to know if the supplied token belongs to owner
-        if !known_pass {
+        // only check permission if you don't already have permission to the entire inventory
+        if !is_owner && !globally_pub_inventory {
             let token: Token = json_may_load(&info_store, &idx.to_le_bytes())?
                 .ok_or_else(|| StdError::generic_err("Token info storage is corrupt"))?;
-            // if the specified token belongs to the specified owner, save if the querier is an operator
-            let mut may_oper_vec = if own_inv.owner == token.owner {
-                None
-            } else {
-                Some(Vec::new())
-            };
-            check_perm_core(
-                deps,
-                block,
-                &token,
-                after,
-                querier,
-                token.owner.as_slice(),
-                exp_idx,
-                may_oper_vec.as_mut().unwrap_or(&mut oper_for),
-                &unauth_err,
-            )?;
-            // if querier is found to have ALL permission for the specified owner, no need to check permission ever again
-            if !oper_for.is_empty() {
-                known_pass = true;
+            // if the token is not globally public
+            if !is_globally_public(&token.permissions, exp_idx, block) {
+                // if there is restricted access, see if start_after is in the restricted list
+                if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+                    if !restricted_list.contains(after) {
+                        return Err(StdError::generic_err(unauth_err));
+                    }
+                }
+                // if the specified token belongs to the specified owner, save if the querier is an operator
+                let mut may_oper_vec = if own_inv.owner == token.owner {
+                    None
+                } else {
+                    Some(Vec::new())
+                };
+                // see if the querier is allowed to view the owner of start_after
+                check_perm_core(
+                    deps,
+                    block,
+                    &token,
+                    after,
+                    querier,
+                    token.owner.as_slice(),
+                    exp_idx,
+                    may_oper_vec.as_mut().unwrap_or(&mut oper_for),
+                    &unauth_err,
+                )?;
             }
         }
         InventoryIter::start_after(deps.storage, &own_inv, idx, &inv_err)?
@@ -2860,53 +2870,71 @@ pub fn query_tokens(
     let mut count = 0u32;
     while let Some(idx) = inv_iter.next(deps.storage)? {
         if let Some(id) = may_load::<String>(&map2id, &idx.to_le_bytes())? {
-            list_it = known_pass;
-            // only check permissions if not public or owner
-            if !known_pass {
+            // display if have full access to owner inventory
+            list_it = is_owner || globally_pub_inventory;
+            // if do not have full access
+            if !list_it {
                 if let Some(token) = json_may_load::<Token>(&info_store, &idx.to_le_bytes())? {
-                    list_it = check_perm_core(
-                        deps,
-                        block,
-                        &token,
-                        &id,
-                        querier,
-                        owner_slice,
-                        exp_idx,
-                        &mut oper_for,
-                        "",
-                    )
-                    .is_ok();
-                    // if querier is found to have ALL permission, no need to check permission ever again
-                    if !oper_for.is_empty() {
-                        known_pass = true;
+                    // true if the token is individually globally public
+                    list_it = is_globally_public(&token.permissions, exp_idx, block);
+                    // if still not allowed
+                    if !list_it {
+                        // see if there are id restrictions and skip if the id doesn't pass
+                        if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+                            if !restricted_list.contains(&id) {
+                                continue;
+                            }
+                        }
+                        // if the querier is a known operator, no need to check permission
+                        // otherwise see if the querier is allowed to view the owner of the token
+                        list_it = !oper_for.is_empty()
+                            || check_perm_core(
+                                deps,
+                                block,
+                                &token,
+                                &id,
+                                querier,
+                                owner_slice,
+                                exp_idx,
+                                &mut oper_for,
+                                "",
+                            )
+                            .is_ok();
                     }
                 }
             }
             if list_it {
-                // take intersection with restricted list from permit
-                if let Some(restricted_list) = &tokens_approved_by_permit {
-                    if restricted_list.contains(&id) {
-                        tokens.push(id);
-                        // it'll hit the gas ceiling before overflowing the count
-                        count += 1;
-                        // exit if we hit the limit
-                        if count >= cut_off {
-                            break;
-                        }
-                    }
-                } else {
-                    tokens.push(id);
-                    // it'll hit the gas ceiling before overflowing the count
-                    count += 1;
-                    // exit if we hit the limit
-                    if count >= cut_off {
-                        break;
-                    }
+                tokens.push(id);
+                // it'll hit the gas ceiling before overflowing the count
+                count += 1;
+                // exit if we hit the limit
+                if count >= cut_off {
+                    break;
                 }
             }
         }
     }
     to_binary(&QueryAnswer::TokenList { tokens })
+}
+
+/// Returns true if the permission type is globally public
+///
+/// # Arguments
+///
+/// * `permissions` - slice of Permissions to check
+/// * `perm_idx` - permission type index
+/// * `block` - a reference to the BlockInfo
+pub fn is_globally_public(permissions: &[Permission], perm_idx: usize, block: &BlockInfo) -> bool {
+    let global_raw = CanonicalAddr(Binary::from(b"public"));
+    let mut is_public = false;
+    if let Some(perm) = permissions.iter().find(|p| p.address == global_raw) {
+        if let Some(exp) = perm.expirations[perm_idx] {
+            if !exp.is_expired(block) {
+                is_public = true;
+            }
+        }
+    }
+    is_public
 }
 
 /// Returns StdResult<Binary> displaying the number of tokens that the querier has permission to
