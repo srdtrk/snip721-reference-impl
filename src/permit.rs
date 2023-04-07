@@ -27,6 +27,29 @@ pub enum NftPermissions {
     Owner,
 }
 
+/// Returns Option<Vec<String>> of token_ids that the permit creator
+/// is allowed to view the private metadata of
+/// if the permit creator has ViewOwner permission, returns None
+///
+/// # Arguments
+///
+/// * `permit` - the permit used to derive the restrictions from
+pub fn check_metadata_restriction(permit: &Permit<NftPermissions>) -> Option<Vec<String>> {
+    let permit_permissions: &Vec<NftPermissions> = &permit.params.permissions;
+    let mut result = vec![];
+    for permission in permit_permissions {
+        match permission {
+            NftPermissions::ViewOwner => {}
+            NftPermissions::ViewOwnerOf(_) => {}
+            NftPermissions::History => {}
+            NftPermissions::Metadata => return None,
+            NftPermissions::MetadataOf(vec) => result.append(&mut vec.clone()),
+            NftPermissions::Owner => return None,
+        }
+    }
+    Some(result)
+}
+
 /// Returns Option<Vec<String>> of token_ids that the permit creator is allowed to view the owner of
 /// if the permit creator has ViewOwner permission, returns None
 ///
@@ -38,12 +61,8 @@ pub fn check_view_owner_restriction(permit: &Permit<NftPermissions>) -> Option<V
     let mut result = vec![];
     for permission in permit_permissions {
         match permission {
-            NftPermissions::ViewOwner => {
-                return None;
-            }
-            NftPermissions::ViewOwnerOf(vec) => {
-                result.append(&mut vec.clone());
-            }
+            NftPermissions::ViewOwner => return None,
+            NftPermissions::ViewOwnerOf(vec) => result.append(&mut vec.clone()),
             NftPermissions::History => {}
             NftPermissions::Metadata => {}
             NftPermissions::MetadataOf(_) => {}
