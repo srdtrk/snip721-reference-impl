@@ -39,7 +39,7 @@ use crate::{
 };
 use crate::{
     mint_run::{SerialNumber, StoredMintRunInfo},
-    permit::check_view_owner_restriction,
+    permit::{check_metadata_restriction, check_view_owner_restriction},
 };
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
@@ -1808,7 +1808,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             &owner,
             viewer.as_deref(),
             viewing_key.as_deref(),
-            start_after.as_deref(),
+            start_after.as_ref(),
             limit,
             None,
             None,
@@ -1872,12 +1872,12 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 /// # Arguments
 ///
 /// * `deps` - a reference to Extern containing all the contract's external dependencies
-/// * `block` - a reference to the BlockInfo
+/// * `env` - a reference to Env containing information about the environment the contract is running in
 /// * `permit` - the permit used to authenticate the query
 /// * `query` - the query to perform
 pub fn permit_queries(
     deps: Deps,
-    block: &BlockInfo,
+    env: &Env,
     permit: Permit<NftPermissions>,
     query: QueryWithPermit,
 ) -> StdResult<Binary> {
@@ -1894,6 +1894,7 @@ pub fn permit_queries(
     )?;
     let has_owner_permission = permit.check_permission(&NftPermissions::Owner);
 
+    let block = &env.block;
     // permit validated, process query
     match query {
         QueryWithPermit::RoyaltyInfo { token_id } => {
@@ -1906,13 +1907,8 @@ pub fn permit_queries(
             query_royalty(deps, block, token_id.as_deref(), None, Some(querier))
         }
         QueryWithPermit::PrivateMetadata { token_id } => {
-            if !check_nft_permission(&permit, &NftPermissions::MetadataOf(vec![token_id.clone()])) {
-                return Err(StdError::generic_err(format!(
-                    "Owner or Metadata permissions are required for this SNIP-721 query, got permissions {:?}",
-                    permit.params.permissions
-                )));
-            }
-            query_private_meta(deps, block, &token_id, None, Some(querier), todo!())
+            let restricted_list: Option<Vec<String>> = check_metadata_restriction(&permit);
+            query_private_meta(deps, block, &token_id, None, Some(querier), restricted_list)
         }
         QueryWithPermit::NftDossier {
             token_id,
@@ -2046,7 +2042,7 @@ pub fn permit_queries(
                 &owner,
                 None,
                 None,
-                start_after.as_deref(),
+                start_after.as_ref(),
                 limit,
                 Some(querier),
                 restricted_list,
@@ -2364,17 +2360,29 @@ pub fn query_private_meta(
     tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let prep_info = query_token_prep(deps, token_id, viewer, from_permit)?;
-    check_perm_core(
-        deps,
-        block,
-        &prep_info.token,
-        token_id,
-        prep_info.viewer_raw.as_ref(),
-        prep_info.token.owner.as_slice(),
-        PermissionType::ViewMetadata.to_usize(),
-        &mut Vec::new(),
-        &prep_info.err_msg,
-    )?;
+    let exp_idx = PermissionType::ViewMetadata.to_usize();
+    // Check if ViewMetadata permission is granted for the Public group
+    let is_public = is_globally_public(prep_info.token.permissions.as_ref(), exp_idx, block);
+    if !is_public {
+        check_perm_core(
+            deps,
+            block,
+            &prep_info.token,
+            token_id,
+            prep_info.viewer_raw.as_ref(),
+            prep_info.token.owner.as_slice(),
+            exp_idx,
+            &mut Vec::new(),
+            &prep_info.err_msg,
+        )?;
+        if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+            if !restricted_list.contains(&token_id.to_string()) {
+                return Err(StdError::generic_err(
+                    "You are not authorized to perform this action on this token",
+                ));
+            }
+        }
+    }
     // don't display if private metadata is sealed
     if !prep_info.token.unwrapped {
         return Err(StdError::generic_err(
