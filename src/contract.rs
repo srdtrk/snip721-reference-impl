@@ -1725,7 +1725,15 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             token_id,
             viewer,
             include_expired,
-        } => query_owner_of(deps, &env.block, &token_id, viewer, include_expired, None),
+        } => query_owner_of(
+            deps,
+            &env.block,
+            &token_id,
+            viewer,
+            include_expired,
+            None,
+            None,
+        ),
         QueryMsg::NftInfo { token_id } => query_nft_info(deps.storage, &token_id),
         QueryMsg::PrivateMetadata { token_id, viewer } => {
             query_private_meta(deps, &env.block, &token_id, viewer, None, None)
@@ -1938,16 +1946,16 @@ pub fn permit_queries(
             token_id,
             include_expired,
         } => {
-            if !check_nft_permission(
-                &permit,
-                &NftPermissions::ViewOwnerOf(vec![token_id.clone()]),
-            ) {
-                return Err(StdError::generic_err(format!(
-                    "Owner or ViewOwner permissions are required for this SNIP-721 query, got permissions {:?}",
-                    permit.params.permissions
-                )));
-            }
-            query_owner_of(deps, block, &token_id, None, include_expired, Some(querier))
+            let restricted_list: Option<Vec<String>> = check_view_owner_restriction(&permit);
+            query_owner_of(
+                deps,
+                block,
+                &token_id,
+                None,
+                include_expired,
+                Some(querier),
+                restricted_list,
+            )
         }
         QueryWithPermit::AllNftInfo {
             token_id,
@@ -2283,6 +2291,8 @@ pub fn query_all_tokens(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 pub fn query_owner_of(
     deps: Deps,
     block: &BlockInfo,
@@ -2290,6 +2300,7 @@ pub fn query_owner_of(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let (may_owner, approvals, _idx) =
         process_cw721_owner_of(deps, block, token_id, viewer, include_expired, from_permit)?;
