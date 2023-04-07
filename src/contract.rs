@@ -1728,7 +1728,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         } => query_owner_of(deps, &env.block, &token_id, viewer, include_expired, None),
         QueryMsg::NftInfo { token_id } => query_nft_info(deps.storage, &token_id),
         QueryMsg::PrivateMetadata { token_id, viewer } => {
-            query_private_meta(deps, &env.block, &token_id, viewer, None)
+            query_private_meta(deps, &env.block, &token_id, viewer, None, None)
         }
         QueryMsg::AllNftInfo {
             token_id,
@@ -1912,7 +1912,7 @@ pub fn permit_queries(
                     permit.params.permissions
                 )));
             }
-            query_private_meta(deps, block, &token_id, None, Some(querier))
+            query_private_meta(deps, block, &token_id, None, Some(querier), todo!())
         }
         QueryWithPermit::NftDossier {
             token_id,
@@ -2353,12 +2353,15 @@ pub fn query_nft_info(storage: &dyn Storage, token_id: &str) -> StdResult<Binary
 /// * `token_id` - string slice of the token id
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 pub fn query_private_meta(
     deps: Deps,
     block: &BlockInfo,
     token_id: &str,
     viewer: Option<ViewerInfo>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let prep_info = query_token_prep(deps, token_id, viewer, from_permit)?;
     check_perm_core(
