@@ -2302,8 +2302,15 @@ pub fn query_owner_of(
     from_permit: Option<CanonicalAddr>,
     tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
-    let (may_owner, approvals, _idx) =
-        process_cw721_owner_of(deps, block, token_id, viewer, include_expired, from_permit)?;
+    let (may_owner, approvals, _idx) = process_cw721_owner_of(
+        deps,
+        block,
+        token_id,
+        viewer,
+        include_expired,
+        from_permit,
+        tokens_approved_by_permit,
+    )?;
     if let Some(owner) = may_owner {
         return to_binary(&QueryAnswer::OwnerOf { owner, approvals });
     }
@@ -2429,8 +2436,15 @@ pub fn query_all_nft_info(
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
 ) -> StdResult<Binary> {
-    let (owner, approvals, idx) =
-        process_cw721_owner_of(deps, block, token_id, viewer, include_expired, from_permit)?;
+    let (owner, approvals, idx) = process_cw721_owner_of(
+        deps,
+        block,
+        token_id,
+        viewer,
+        include_expired,
+        from_permit,
+        todo!(),
+    )?;
     let meta_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_PUB_META);
     let info: Option<Metadata> = may_load(&meta_store, &idx.to_le_bytes())?;
     let access = Cw721OwnerOfResponse { owner, approvals };
@@ -3356,6 +3370,8 @@ fn query_token_prep(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 fn process_cw721_owner_of(
     deps: Deps,
     block: &BlockInfo,
@@ -3363,6 +3379,7 @@ fn process_cw721_owner_of(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<(Option<Addr>, Vec<Cw721Approval>, u32)> {
     let prep_info = query_token_prep(deps, token_id, viewer, from_permit)?;
     let opt_viewer = prep_info.viewer_raw.as_ref();
@@ -3376,6 +3393,7 @@ fn process_cw721_owner_of(
         &mut Vec::new(),
         &prep_info.err_msg,
         prep_info.owner_is_public,
+        tokens_approved_by_permit,
     )
     .is_ok()
     {
@@ -3592,6 +3610,8 @@ fn check_view_supply(
 /// * `oper_for` - a mutable reference to a list of owners that gave the sender "all" permission
 /// * `custom_err` - string slice of the error msg to return if not permitted
 /// * `owner_is_public` - true if token ownership is public for this contract
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 #[allow(clippy::too_many_arguments)]
 pub fn check_permission(
     deps: Deps,
@@ -3603,6 +3623,7 @@ pub fn check_permission(
     oper_for: &mut Vec<CanonicalAddr>,
     custom_err: &str,
     owner_is_public: bool,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<()> {
     let exp_idx = perm_type.to_usize();
     let owner_slice = token.owner.as_slice();
@@ -3613,6 +3634,13 @@ pub fn check_permission(
         let pass: bool = may_load(&priv_store, owner_slice)?.unwrap_or(owner_is_public);
         if pass {
             return Ok(());
+        }
+    }
+    if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+        if !restricted_list.contains(&token_id.to_string()) {
+            return Err(StdError::generic_err(
+                "You are not authorized to perform this action on this token",
+            ));
         }
     }
     check_perm_core(
@@ -3788,6 +3816,7 @@ fn get_token_if_permitted(
         oper_for,
         &custom_err,
         config.owner_is_public,
+        None,
     )?;
     Ok((token, idx))
 }
