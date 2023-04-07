@@ -1873,7 +1873,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 ///
 /// * `deps` - a reference to Extern containing all the contract's external dependencies
 /// * `block` - a reference to the BlockInfo
-/// * `permit` - the permit used to authentic the query
+/// * `permit` - the permit used to authenticate the query
 /// * `query` - the query to perform
 pub fn permit_queries(
     deps: Deps,
