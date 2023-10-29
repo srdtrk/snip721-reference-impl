@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::expiration::Expiration;
 use crate::mint_run::{MintRunInfo, SerialNumber};
+use crate::permit::NftPermissions;
 use crate::royalties::{DisplayRoyaltyInfo, RoyaltyInfo};
 use crate::token::{Extension, Metadata};
 
@@ -784,6 +785,8 @@ pub enum QueryMsg {
     ImplementsNonTransferableTokens {},
     /// display that this contract implements the use of the `token_subtype` metadata extension field
     ImplementsTokenSubtype {},
+    /// display that this contract implements the use of the `NftPermissions` for query permits
+    ImplementsNftQueryPermits {},
     /// verify that the specified address has approval to transfer every listed token.
     /// A token will count as unapproved if it is non-transferable
     VerifyTransferApproval {
@@ -825,7 +828,7 @@ pub enum QueryMsg {
     /// perform queries by passing permits instead of viewing keys
     WithPermit {
         /// permit used to verify querier identity
-        permit: Permit,
+        permit: Permit<NftPermissions>,
         /// query to perform
         query: QueryWithPermit,
     },
@@ -901,6 +904,7 @@ pub enum QueryAnswer {
         burn_is_enabled: bool,
         implements_non_transferable_tokens: bool,
         implements_token_subtype: bool,
+        implements_nft_query_permits: bool,
     },
     Minters {
         minters: Vec<Addr>,
@@ -973,6 +977,9 @@ pub enum QueryAnswer {
         is_enabled: bool,
     },
     ImplementsTokenSubtype {
+        is_enabled: bool,
+    },
+    ImplementsNftQueryPermits {
         is_enabled: bool,
     },
     VerifyTransferApproval {

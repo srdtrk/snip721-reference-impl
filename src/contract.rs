@@ -16,9 +16,6 @@ use secret_toolkit::{
     viewing_key::{ViewingKey, ViewingKeyStore},
 };
 
-use crate::expiration::Expiration;
-use crate::inventory::{Inventory, InventoryIter};
-use crate::mint_run::{SerialNumber, StoredMintRunInfo};
 use crate::msg::{
     AccessLevel, BatchNftDossierElement, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse,
     ExecuteAnswer, ExecuteMsg, InstantiateMsg, Mint, QueryAnswer, QueryMsg, QueryWithPermit,
@@ -35,6 +32,15 @@ use crate::state::{
     PREFIX_ROYALTY_INFO, VIEWING_KEY_ERR_MSG,
 };
 use crate::token::{Metadata, Token};
+use crate::{expiration::Expiration, permit::NftPermissions};
+use crate::{
+    inventory::{Inventory, InventoryIter},
+    permit::check_nft_permission,
+};
+use crate::{
+    mint_run::{SerialNumber, StoredMintRunInfo},
+    permit::{check_metadata_restriction, check_view_owner_restriction},
+};
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
 /// response size
@@ -1719,10 +1725,18 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             token_id,
             viewer,
             include_expired,
-        } => query_owner_of(deps, &env.block, &token_id, viewer, include_expired, None),
+        } => query_owner_of(
+            deps,
+            &env.block,
+            &token_id,
+            viewer,
+            include_expired,
+            None,
+            None,
+        ),
         QueryMsg::NftInfo { token_id } => query_nft_info(deps.storage, &token_id),
         QueryMsg::PrivateMetadata { token_id, viewer } => {
-            query_private_meta(deps, &env.block, &token_id, viewer, None)
+            query_private_meta(deps, &env.block, &token_id, viewer, None, None)
         }
         QueryMsg::AllNftInfo {
             token_id,
@@ -1733,12 +1747,28 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             token_id,
             viewer,
             include_expired,
-        } => query_nft_dossier(deps, &env.block, token_id, viewer, include_expired, None),
+        } => query_nft_dossier(
+            deps,
+            &env.block,
+            token_id,
+            viewer,
+            include_expired,
+            None,
+            None,
+        ),
         QueryMsg::BatchNftDossier {
             token_ids,
             viewer,
             include_expired,
-        } => query_batch_nft_dossier(deps, &env.block, token_ids, viewer, include_expired, None),
+        } => query_batch_nft_dossier(
+            deps,
+            &env.block,
+            token_ids,
+            viewer,
+            include_expired,
+            None,
+            None,
+        ),
         QueryMsg::TokenApprovals {
             token_id,
             viewing_key,
@@ -1786,8 +1816,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             &owner,
             viewer.as_deref(),
             viewing_key.as_deref(),
-            start_after.as_deref(),
+            start_after.as_ref(),
             limit,
+            None,
             None,
         ),
         QueryMsg::NumTokensOfOwner {
@@ -1800,6 +1831,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             &owner,
             viewer.as_deref(),
             viewing_key.as_deref(),
+            None,
             None,
         ),
         QueryMsg::VerifyTransferApproval {
@@ -1820,6 +1852,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         }
         QueryMsg::ImplementsTokenSubtype {} => {
             to_binary(&QueryAnswer::ImplementsTokenSubtype { is_enabled: true })
+        }
+        QueryMsg::ImplementsNftQueryPermits {} => {
+            to_binary(&QueryAnswer::ImplementsNftQueryPermits { is_enabled: true })
         }
         QueryMsg::TransactionHistory {
             address,
@@ -1845,13 +1880,13 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 /// # Arguments
 ///
 /// * `deps` - a reference to Extern containing all the contract's external dependencies
-/// * `env` - a reference to the Env of contract's environment
-/// * `permit` - the permit used to authentic the query
+/// * `env` - a reference to Env containing information about the environment the contract is running in
+/// * `permit` - the permit used to authenticate the query
 /// * `query` - the query to perform
 pub fn permit_queries(
     deps: Deps,
     env: &Env,
-    permit: Permit,
+    permit: Permit<NftPermissions>,
     query: QueryWithPermit,
 ) -> StdResult<Binary> {
     let querier = deps.api.addr_canonicalize(
@@ -1865,73 +1900,181 @@ pub fn permit_queries(
             )?)?
             .as_str(),
     )?;
-    if !permit.check_permission(&secret_toolkit::permit::TokenPermissions::Owner) {
-        return Err(StdError::generic_err(format!(
-            "Owner permission is required for SNIP-721 queries, got permissions {:?}",
-            permit.params.permissions
-        )));
-    }
+    let has_owner_permission = permit.check_permission(&NftPermissions::Owner);
+
     let block = &env.block;
     // permit validated, process query
     match query {
         QueryWithPermit::RoyaltyInfo { token_id } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_royalty(deps, block, token_id.as_deref(), None, Some(querier))
         }
         QueryWithPermit::PrivateMetadata { token_id } => {
-            query_private_meta(deps, block, &token_id, None, Some(querier))
+            let restricted_list: Option<Vec<String>> = check_metadata_restriction(&permit);
+            query_private_meta(deps, block, &token_id, None, Some(querier), restricted_list)
         }
         QueryWithPermit::NftDossier {
             token_id,
             include_expired,
-        } => query_nft_dossier(deps, block, token_id, None, include_expired, Some(querier)),
+        } => query_nft_dossier(
+            deps,
+            block,
+            token_id,
+            None,
+            include_expired,
+            Some(querier),
+            Some(&permit),
+        ),
         QueryWithPermit::BatchNftDossier {
             token_ids,
             include_expired,
-        } => query_batch_nft_dossier(deps, block, token_ids, None, include_expired, Some(querier)),
+        } => query_batch_nft_dossier(
+            deps,
+            block,
+            token_ids,
+            None,
+            include_expired,
+            Some(querier),
+            Some(&permit),
+        ),
         QueryWithPermit::OwnerOf {
             token_id,
             include_expired,
-        } => query_owner_of(deps, block, &token_id, None, include_expired, Some(querier)),
+        } => {
+            let restricted_list: Option<Vec<String>> = check_view_owner_restriction(&permit);
+            query_owner_of(
+                deps,
+                block,
+                &token_id,
+                None,
+                include_expired,
+                Some(querier),
+                restricted_list,
+            )
+        }
         QueryWithPermit::AllNftInfo {
             token_id,
             include_expired,
-        } => query_all_nft_info(deps, block, &token_id, None, include_expired, Some(querier)),
+        } => {
+            if !check_nft_permission(
+                &permit,
+                &NftPermissions::ViewOwnerOf(vec![token_id.clone()]),
+            ) {
+                return Err(StdError::generic_err(format!(
+                    "Owner or ViewOwner permissions are required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+            query_all_nft_info(deps, block, &token_id, None, include_expired, Some(querier))
+        }
         QueryWithPermit::InventoryApprovals { include_expired } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_inventory_approvals(deps, block, None, include_expired, Some(querier))
         }
         QueryWithPermit::VerifyTransferApproval { token_ids } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_verify_approval(deps, block, token_ids, None, Some(querier))
         }
         QueryWithPermit::TransactionHistory { page, page_size } => {
+            if !check_nft_permission(&permit, &NftPermissions::History) {
+                return Err(StdError::generic_err(format!(
+                    "Owner or History permissions are required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_transactions(deps, None, page, page_size, Some(querier))
         }
-        QueryWithPermit::NumTokens {} => query_num_tokens(deps, None, Some(querier)),
+        QueryWithPermit::NumTokens {} => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+            query_num_tokens(deps, None, Some(querier))
+        }
         QueryWithPermit::AllTokens { start_after, limit } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_all_tokens(deps, None, start_after.as_deref(), limit, Some(querier))
         }
         QueryWithPermit::TokenApprovals {
             token_id,
             include_expired,
-        } => query_token_approvals(deps, block, &token_id, None, include_expired, Some(querier)),
+        } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
+            query_token_approvals(deps, block, &token_id, None, include_expired, Some(querier))
+        }
         QueryWithPermit::ApprovedForAll { include_expired } => {
+            if !has_owner_permission {
+                return Err(StdError::generic_err(format!(
+                    "Owner permission is required for this SNIP-721 query, got permissions {:?}",
+                    permit.params.permissions
+                )));
+            }
             query_approved_for_all(deps, block, None, None, include_expired, Some(querier))
         }
         QueryWithPermit::Tokens {
             owner,
             start_after,
             limit,
-        } => query_tokens(
-            deps,
-            block,
-            &owner,
-            None,
-            None,
-            start_after.as_deref(),
-            limit,
-            Some(querier),
-        ),
+        } => {
+            let restricted_list: Option<Vec<String>> = check_view_owner_restriction(&permit);
+            query_tokens(
+                deps,
+                block,
+                &owner,
+                None,
+                None,
+                start_after.as_ref(),
+                limit,
+                Some(querier),
+                restricted_list,
+            )
+        }
         QueryWithPermit::NumTokensOfOwner { owner } => {
-            query_num_owner_tokens(deps, block, &owner, None, None, Some(querier))
+            let restricted_list: Option<Vec<String>> = check_view_owner_restriction(&permit);
+            if let Some(list) = &restricted_list {
+                if list.is_empty() {
+                    return Err(StdError::generic_err(format!(
+                        "Owner or ViewOwner permissions are required for this SNIP-721 query, got permissions {:?}",
+                        permit.params.permissions
+                    )));
+                }
+            }
+            query_num_owner_tokens(
+                deps,
+                block,
+                &owner,
+                None,
+                None,
+                Some(querier),
+                restricted_list,
+            )
         }
     }
 }
@@ -2051,6 +2194,7 @@ pub fn query_config(storage: &dyn Storage) -> StdResult<Binary> {
         burn_is_enabled: config.burn_is_enabled,
         implements_non_transferable_tokens: true,
         implements_token_subtype: true,
+        implements_nft_query_permits: true,
     })
 }
 
@@ -2147,6 +2291,8 @@ pub fn query_all_tokens(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 pub fn query_owner_of(
     deps: Deps,
     block: &BlockInfo,
@@ -2154,9 +2300,17 @@ pub fn query_owner_of(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
-    let (may_owner, approvals, _idx) =
-        process_cw721_owner_of(deps, block, token_id, viewer, include_expired, from_permit)?;
+    let (may_owner, approvals, _idx) = process_cw721_owner_of(
+        deps,
+        block,
+        token_id,
+        viewer,
+        include_expired,
+        from_permit,
+        tokens_approved_by_permit,
+    )?;
     if let Some(owner) = may_owner {
         return to_binary(&QueryAnswer::OwnerOf { owner, approvals });
     }
@@ -2213,25 +2367,40 @@ pub fn query_nft_info(storage: &dyn Storage, token_id: &str) -> StdResult<Binary
 /// * `token_id` - string slice of the token id
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 pub fn query_private_meta(
     deps: Deps,
     block: &BlockInfo,
     token_id: &str,
     viewer: Option<ViewerInfo>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let prep_info = query_token_prep(deps, token_id, viewer, from_permit)?;
-    check_perm_core(
-        deps,
-        block,
-        &prep_info.token,
-        token_id,
-        prep_info.viewer_raw.as_ref(),
-        prep_info.token.owner.as_slice(),
-        PermissionType::ViewMetadata.to_usize(),
-        &mut Vec::new(),
-        &prep_info.err_msg,
-    )?;
+    let exp_idx = PermissionType::ViewMetadata.to_usize();
+    // Check if ViewMetadata permission is granted for the Public group
+    let is_public = is_globally_public(prep_info.token.permissions.as_ref(), exp_idx, block);
+    if !is_public {
+        check_perm_core(
+            deps,
+            block,
+            &prep_info.token,
+            token_id,
+            prep_info.viewer_raw.as_ref(),
+            prep_info.token.owner.as_slice(),
+            exp_idx,
+            &mut Vec::new(),
+            &prep_info.err_msg,
+        )?;
+        if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+            if !restricted_list.contains(&token_id.to_string()) {
+                return Err(StdError::generic_err(
+                    "You are not authorized to perform this action on this token",
+                ));
+            }
+        }
+    }
     // don't display if private metadata is sealed
     if !prep_info.token.unwrapped {
         return Err(StdError::generic_err(
@@ -2267,8 +2436,15 @@ pub fn query_all_nft_info(
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
 ) -> StdResult<Binary> {
-    let (owner, approvals, idx) =
-        process_cw721_owner_of(deps, block, token_id, viewer, include_expired, from_permit)?;
+    let (owner, approvals, idx) = process_cw721_owner_of(
+        deps,
+        block,
+        token_id,
+        viewer,
+        include_expired,
+        from_permit,
+        todo!(),
+    )?;
     let meta_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_PUB_META);
     let info: Option<Metadata> = may_load(&meta_store, &idx.to_le_bytes())?;
     let access = Cw721OwnerOfResponse { owner, approvals };
@@ -2288,6 +2464,7 @@ pub fn query_all_nft_info(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `permit` - optional reference to a Permit
 pub fn query_nft_dossier(
     deps: Deps,
     block: &BlockInfo,
@@ -2295,6 +2472,7 @@ pub fn query_nft_dossier(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    permit: Option<&Permit<NftPermissions>>,
 ) -> StdResult<Binary> {
     let dossier = dossier_list(
         deps,
@@ -2303,6 +2481,7 @@ pub fn query_nft_dossier(
         viewer,
         include_expired,
         from_permit,
+        permit,
     )?
     .pop()
     .ok_or_else(|| StdError::generic_err("NftDossier can never return an empty dossier list"))?;
@@ -2338,6 +2517,7 @@ pub fn query_nft_dossier(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `permit` - optional reference to a Permit
 pub fn query_batch_nft_dossier(
     deps: Deps,
     block: &BlockInfo,
@@ -2345,8 +2525,17 @@ pub fn query_batch_nft_dossier(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    permit: Option<&Permit<NftPermissions>>,
 ) -> StdResult<Binary> {
-    let nft_dossiers = dossier_list(deps, block, token_ids, viewer, include_expired, from_permit)?;
+    let nft_dossiers = dossier_list(
+        deps,
+        block,
+        token_ids,
+        viewer,
+        include_expired,
+        from_permit,
+        permit,
+    )?;
 
     to_binary(&QueryAnswer::BatchNftDossier { nft_dossiers })
 }
@@ -2569,6 +2758,8 @@ pub fn query_approved_for_all(
 ///                   lexicographical order
 /// * `limit` - optional max number of tokens to display
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 #[allow(clippy::too_many_arguments)]
 pub fn query_tokens(
     deps: Deps,
@@ -2576,17 +2767,22 @@ pub fn query_tokens(
     owner: &str,
     viewer: Option<&str>,
     viewing_key: Option<&str>,
-    start_after: Option<&str>,
+    start_after: Option<&String>,
     limit: Option<u32>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let owner_addr = deps.api.addr_validate(owner)?;
     let owner_raw = deps.api.addr_canonicalize(owner_addr.as_str())?;
     let cut_off = limit.unwrap_or(30);
-    // determine the querier
+    // determine the querier.  is_owner is only true if the querier is the owner whose inventory is being
+    // queried and if there is full access to that inventory
     let (is_owner, may_querier) = if let Some(pmt) = from_permit.as_ref() {
-        // permit tells you who is querying, so also check if he is the owner
-        (owner_raw == *pmt, from_permit)
+        // only treat a permit querier as the owner if they have unrestricted view_owner privelege
+        (
+            owner_raw == *pmt && tokens_approved_by_permit.is_none(),
+            from_permit,
+        )
         // no permit, so check if a key was provided and who it matches
     } else if let Some(key) = viewing_key {
         // if there is a viewer
@@ -2624,25 +2820,22 @@ pub fn query_tokens(
 
     let querier = may_querier.as_ref();
     // if querier is different than the owner, check if ownership is public
-    let mut may_config: Option<Config> = None;
-    let mut known_pass = if !is_owner {
-        let config: Config = load(deps.storage, CONFIG_KEY)?;
-        let own_priv_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_OWNER_PRIV);
-        let pass: bool = may_load(&own_priv_store, owner_slice)?.unwrap_or(config.owner_is_public);
-        may_config = Some(config);
-        pass
-    } else {
-        true
-    };
+    let config: Config = load(deps.storage, CONFIG_KEY)?;
+    let own_priv_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_OWNER_PRIV);
+    let mut globally_pub_inventory: bool =
+        may_load(&own_priv_store, owner_slice)?.unwrap_or(config.owner_is_public);
     let exp_idx = PermissionType::ViewOwner.to_usize();
+    if !globally_pub_inventory {
+        let all_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_ALL_PERMISSIONS);
+        let all_perm: Vec<Permission> = json_may_load(&all_store, owner_slice)?.unwrap_or_default();
+        globally_pub_inventory = is_globally_public(&all_perm, exp_idx, block);
+    }
     let info_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_INFOS);
     let mut list_it: bool;
     let mut oper_for: Vec<CanonicalAddr> = Vec::new();
     let mut tokens: Vec<String> = Vec::new();
     let map2id = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MAP_TO_ID);
     let mut inv_iter = if let Some(after) = start_after {
-        // load the config if we haven't already
-        let config = may_config.map_or_else(|| load::<Config>(deps.storage, CONFIG_KEY), Ok)?;
         // if the querier is allowed to view all of the owner's tokens, let them know if the token
         // does not belong to the owner
         let inv_err = format!("Token ID: {} is not in the specified inventory", after);
@@ -2655,8 +2848,10 @@ pub fn query_tokens(
         // if token supply is public let them know if the token id does not exist
         let not_found_err = if config.token_supply_is_public {
             &public_err
-        } else if known_pass {
+        // if there is permission to the owner's entire inventory, just say he doesn't own it if it does not exist
+        } else if is_owner || globally_pub_inventory {
             &inv_err
+        // wasn't granted ownership viewing permission for the owner's inventory
         } else {
             &unauth_err
         };
@@ -2664,29 +2859,36 @@ pub fn query_tokens(
         let idx: u32 = may_load(&map2idx, after.as_bytes())?
             .ok_or_else(|| StdError::generic_err(not_found_err))?;
         // make sure querier is allowed to know if the supplied token belongs to owner
-        if !known_pass {
+        // only check permission if you don't already have permission to the entire inventory
+        if !is_owner && !globally_pub_inventory {
             let token: Token = json_may_load(&info_store, &idx.to_le_bytes())?
                 .ok_or_else(|| StdError::generic_err("Token info storage is corrupt"))?;
-            // if the specified token belongs to the specified owner, save if the querier is an operator
-            let mut may_oper_vec = if own_inv.owner == token.owner {
-                None
-            } else {
-                Some(Vec::new())
-            };
-            check_perm_core(
-                deps,
-                block,
-                &token,
-                after,
-                querier,
-                token.owner.as_slice(),
-                exp_idx,
-                may_oper_vec.as_mut().unwrap_or(&mut oper_for),
-                &unauth_err,
-            )?;
-            // if querier is found to have ALL permission for the specified owner, no need to check permission ever again
-            if !oper_for.is_empty() {
-                known_pass = true;
+            // if the token is not globally public
+            if !is_globally_public(&token.permissions, exp_idx, block) {
+                // if there is restricted access, see if start_after is in the restricted list
+                if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+                    if !restricted_list.contains(after) {
+                        return Err(StdError::generic_err(unauth_err));
+                    }
+                }
+                // if the specified token belongs to the specified owner, save if the querier is an operator
+                let mut may_oper_vec = if own_inv.owner == token.owner {
+                    None
+                } else {
+                    Some(Vec::new())
+                };
+                // see if the querier is allowed to view the owner of start_after
+                check_perm_core(
+                    deps,
+                    block,
+                    &token,
+                    after,
+                    querier,
+                    token.owner.as_slice(),
+                    exp_idx,
+                    may_oper_vec.as_mut().unwrap_or(&mut oper_for),
+                    &unauth_err,
+                )?;
             }
         }
         InventoryIter::start_after(deps.storage, &own_inv, idx, &inv_err)?
@@ -2696,25 +2898,36 @@ pub fn query_tokens(
     let mut count = 0u32;
     while let Some(idx) = inv_iter.next(deps.storage)? {
         if let Some(id) = may_load::<String>(&map2id, &idx.to_le_bytes())? {
-            list_it = known_pass;
-            // only check permissions if not public or owner
-            if !known_pass {
+            // display if have full access to owner inventory
+            list_it = is_owner || globally_pub_inventory;
+            // if do not have full access
+            if !list_it {
                 if let Some(token) = json_may_load::<Token>(&info_store, &idx.to_le_bytes())? {
-                    list_it = check_perm_core(
-                        deps,
-                        block,
-                        &token,
-                        &id,
-                        querier,
-                        owner_slice,
-                        exp_idx,
-                        &mut oper_for,
-                        "",
-                    )
-                    .is_ok();
-                    // if querier is found to have ALL permission, no need to check permission ever again
-                    if !oper_for.is_empty() {
-                        known_pass = true;
+                    // true if the token is individually globally public
+                    list_it = is_globally_public(&token.permissions, exp_idx, block);
+                    // if still not allowed
+                    if !list_it {
+                        // see if there are id restrictions and skip if the id doesn't pass
+                        if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+                            if !restricted_list.contains(&id) {
+                                continue;
+                            }
+                        }
+                        // if the querier is a known operator, no need to check permission
+                        // otherwise see if the querier is allowed to view the owner of the token
+                        list_it = !oper_for.is_empty()
+                            || check_perm_core(
+                                deps,
+                                block,
+                                &token,
+                                &id,
+                                querier,
+                                owner_slice,
+                                exp_idx,
+                                &mut oper_for,
+                                "",
+                            )
+                            .is_ok();
                     }
                 }
             }
@@ -2732,6 +2945,26 @@ pub fn query_tokens(
     to_binary(&QueryAnswer::TokenList { tokens })
 }
 
+/// Returns true if the permission type is globally public
+///
+/// # Arguments
+///
+/// * `permissions` - slice of Permissions to check
+/// * `perm_idx` - permission type index
+/// * `block` - a reference to the BlockInfo
+pub fn is_globally_public(permissions: &[Permission], perm_idx: usize, block: &BlockInfo) -> bool {
+    let global_raw = CanonicalAddr(Binary::from(b"public"));
+    let mut is_public = false;
+    if let Some(perm) = permissions.iter().find(|p| p.address == global_raw) {
+        if let Some(exp) = perm.expirations[perm_idx] {
+            if !exp.is_expired(block) {
+                is_public = true;
+            }
+        }
+    }
+    is_public
+}
+
 /// Returns StdResult<Binary> displaying the number of tokens that the querier has permission to
 /// view ownership and that belong to the specified address
 ///
@@ -2743,6 +2976,8 @@ pub fn query_tokens(
 /// * `viewer` - optional address of the querier if different from the owner
 /// * `viewing_key` - optional viewing key String
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 pub fn query_num_owner_tokens(
     deps: Deps,
     block: &BlockInfo,
@@ -2750,6 +2985,7 @@ pub fn query_num_owner_tokens(
     viewer: Option<&str>,
     viewing_key: Option<&str>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<Binary> {
     let owner_addr = deps.api.addr_validate(owner)?;
     let owner_raw = deps.api.addr_canonicalize(owner_addr.as_str())?;
@@ -2831,7 +3067,7 @@ pub fn query_num_owner_tokens(
     }
     // if it is either the owner, ownership is public, or the querier has inventory-wide view owner permission,
     // let them see the full count
-    if known_pass {
+    if known_pass && tokens_approved_by_permit.is_none() {
         return to_binary(&QueryAnswer::NumTokens { count: own_inv.cnt });
     }
 
@@ -2851,24 +3087,49 @@ pub fn query_num_owner_tokens(
         }
     }
     // check if the the token permissions have expired, and if not include it in the count
+    let map2id = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MAP_TO_ID);
     let info_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_INFOS);
     let mut count = 0u32;
     for idx in token_idxs.into_iter() {
         if let Some(token) = json_may_load::<Token>(&info_store, &idx.to_le_bytes())? {
-            found_one = only_public;
-            for perm in token.permissions.iter() {
-                if perm.address == *sender || perm.address == global_raw {
-                    if let Some(exp) = perm.expirations[exp_idx] {
-                        if !exp.is_expired(block) {
-                            count += 1;
-                            break;
+            if let Some(restricted_list) = &tokens_approved_by_permit {
+                if let Some(id) = may_load::<String>(&map2id, &idx.to_le_bytes())? {
+                    if restricted_list.contains(&id) {
+                        found_one = only_public;
+                        for perm in token.permissions.iter() {
+                            if perm.address == *sender || perm.address == global_raw {
+                                if let Some(exp) = perm.expirations[exp_idx] {
+                                    if !exp.is_expired(block) {
+                                        count += 1;
+                                        break;
+                                    }
+                                }
+                                // we can quit if we found both the sender and the global (or if only searching for public)
+                                if found_one {
+                                    break;
+                                } else {
+                                    found_one = true;
+                                }
+                            }
                         }
                     }
-                    // we can quit if we found both the sender and the global (or if only searching for public)
-                    if found_one {
-                        break;
-                    } else {
-                        found_one = true;
+                }
+            } else {
+                found_one = only_public;
+                for perm in token.permissions.iter() {
+                    if perm.address == *sender || perm.address == global_raw {
+                        if let Some(exp) = perm.expirations[exp_idx] {
+                            if !exp.is_expired(block) {
+                                count += 1;
+                                break;
+                            }
+                        }
+                        // we can quit if we found both the sender and the global (or if only searching for public)
+                        if found_one {
+                            break;
+                        } else {
+                            found_one = true;
+                        }
                     }
                 }
             }
@@ -3109,6 +3370,8 @@ fn query_token_prep(
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 fn process_cw721_owner_of(
     deps: Deps,
     block: &BlockInfo,
@@ -3116,6 +3379,7 @@ fn process_cw721_owner_of(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<(Option<Addr>, Vec<Cw721Approval>, u32)> {
     let prep_info = query_token_prep(deps, token_id, viewer, from_permit)?;
     let opt_viewer = prep_info.viewer_raw.as_ref();
@@ -3129,6 +3393,7 @@ fn process_cw721_owner_of(
         &mut Vec::new(),
         &prep_info.err_msg,
         prep_info.owner_is_public,
+        tokens_approved_by_permit,
     )
     .is_ok()
     {
@@ -3345,6 +3610,8 @@ fn check_view_supply(
 /// * `oper_for` - a mutable reference to a list of owners that gave the sender "all" permission
 /// * `custom_err` - string slice of the error msg to return if not permitted
 /// * `owner_is_public` - true if token ownership is public for this contract
+/// * `tokens_approved_by_permit` - token_ids approved by permit, if present, result
+///                                 will be restricted to this list.
 #[allow(clippy::too_many_arguments)]
 pub fn check_permission(
     deps: Deps,
@@ -3356,6 +3623,7 @@ pub fn check_permission(
     oper_for: &mut Vec<CanonicalAddr>,
     custom_err: &str,
     owner_is_public: bool,
+    tokens_approved_by_permit: Option<Vec<String>>,
 ) -> StdResult<()> {
     let exp_idx = perm_type.to_usize();
     let owner_slice = token.owner.as_slice();
@@ -3366,6 +3634,13 @@ pub fn check_permission(
         let pass: bool = may_load(&priv_store, owner_slice)?.unwrap_or(owner_is_public);
         if pass {
             return Ok(());
+        }
+    }
+    if let Some(restricted_list) = tokens_approved_by_permit.as_ref() {
+        if !restricted_list.contains(&token_id.to_string()) {
+            return Err(StdError::generic_err(
+                "You are not authorized to perform this action on this token",
+            ));
         }
     }
     check_perm_core(
@@ -3541,6 +3816,7 @@ fn get_token_if_permitted(
         oper_for,
         &custom_err,
         config.owner_is_public,
+        None,
     )?;
     Ok((token, idx))
 }
@@ -4775,6 +5051,7 @@ pub struct OwnerInfo {
 /// * `viewer` - optional address and key making an authenticated query request
 /// * `include_expired` - optionally true if the Approval lists should include expired Approvals
 /// * `from_permit` - address derived from an Owner permit, if applicable
+/// * `permit` - optional reference to a Permit
 pub fn dossier_list(
     deps: Deps,
     block: &BlockInfo,
@@ -4782,6 +5059,7 @@ pub fn dossier_list(
     viewer: Option<ViewerInfo>,
     include_expired: Option<bool>,
     from_permit: Option<CanonicalAddr>,
+    permit: Option<&Permit<NftPermissions>>,
 ) -> StdResult<Vec<BatchNftDossierElement>> {
     let viewer_raw = get_querier(deps, viewer, from_permit)?;
     let opt_viewer = viewer_raw.as_ref();
@@ -4811,6 +5089,13 @@ pub fn dossier_list(
     let run_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_MINT_RUN);
     let all_store = ReadonlyPrefixedStorage::new(deps.storage, PREFIX_ALL_PERMISSIONS);
 
+    // check if the permit allows all actions
+    let permit_full_owner_permission: bool = if let Some(permit) = permit {
+        permit.check_permission(&NftPermissions::Owner)
+    } else {
+        // if no permit, then there are no permit restrictions applied
+        true
+    };
     for id in token_ids.into_iter() {
         let err_msg = format!(
             "You are not authorized to perform this action on token {}",
@@ -4846,76 +5131,8 @@ pub fn dossier_list(
                 StdError::generic_err("This can't happen since we just pushed an OwnerInfo!")
             })?
         };
+
         let global_pass = owner_inf.owner_is_public;
-        // get the owner if permitted
-        let owner = if global_pass
-            || check_perm_core(
-                deps,
-                block,
-                &token,
-                &id,
-                opt_viewer,
-                owner_slice,
-                perm_type_info.view_owner_idx,
-                &mut owner_oper_for,
-                &err_msg,
-            )
-            .is_ok()
-        {
-            Some(deps.api.addr_humanize(&token.owner)?)
-        } else {
-            None
-        };
-        // get the public metadata
-        let token_key = idx.to_le_bytes();
-        let public_metadata: Option<Metadata> = may_load(&pub_store, &token_key)?;
-        // get the private metadata if it is not sealed and if the viewer is permitted
-        let mut display_private_metadata_error = None;
-        let private_metadata = if let Err(err) = check_perm_core(
-            deps,
-            block,
-            &token,
-            &id,
-            opt_viewer,
-            owner_slice,
-            perm_type_info.view_meta_idx,
-            &mut meta_oper_for,
-            &err_msg,
-        ) {
-            if let StdError::GenericErr { msg, .. } = err {
-                display_private_metadata_error = Some(msg);
-            }
-            None
-        } else if !token.unwrapped {
-            display_private_metadata_error = Some(format!(
-                "Sealed metadata of token {} must be unwrapped by calling Reveal before it can be viewed", &id
-            ));
-            None
-        } else {
-            let priv_meta: Option<Metadata> = may_load(&priv_store, &token_key)?;
-            priv_meta
-        };
-        // get the royalty information if present
-        let may_roy_inf: Option<StoredRoyaltyInfo> = may_load(&roy_store, &token_key)?;
-        let royalty_info = may_roy_inf
-            .map(|r| {
-                let hide_addr = check_perm_core(
-                    deps,
-                    block,
-                    &token,
-                    &id,
-                    opt_viewer,
-                    owner_slice,
-                    perm_type_info.transfer_idx,
-                    &mut xfer_oper_for,
-                    &err_msg,
-                )
-                .is_err();
-                r.to_human(deps.api, hide_addr)
-            })
-            .transpose()?;
-        // get the mint run information
-        let mint_run: StoredMintRunInfo = load(&run_store, &token_key)?;
         // get the token approvals
         let (token_approv, token_owner_exp, token_meta_exp) = gen_snip721_approvals(
             deps.api,
@@ -4956,22 +5173,133 @@ pub fn dossier_list(
                 (None, None)
             }
         });
+        // check all permit permissions:
+        let mut permit_view_owner_permission: bool = true;
+        let mut permit_private_metadata_permission: bool = true;
+        let mut permissions_for_errors: Option<Vec<NftPermissions>> = None;
+        if !permit_full_owner_permission {
+            if let Some(permit) = permit {
+                permit_view_owner_permission =
+                    permit.check_permission(&NftPermissions::ViewOwnerOf(vec![id.clone()]));
+                permit_private_metadata_permission =
+                    permit.check_permission(&NftPermissions::MetadataOf(vec![id.clone()]));
+                permissions_for_errors = Some(permit.params.permissions.clone());
+            }
+        }
+
+        // get the owner if permitted
+        let owner = if global_pass
+            || (check_perm_core(
+                deps,
+                block,
+                &token,
+                &id,
+                opt_viewer,
+                owner_slice,
+                perm_type_info.view_owner_idx,
+                &mut owner_oper_for,
+                &err_msg,
+            )
+            .is_ok()
+                && permit_view_owner_permission)
+        {
+            Some(deps.api.addr_humanize(&token.owner)?)
+        } else {
+            None
+        };
+        // get the public metadata
+        let token_key = idx.to_le_bytes();
+        let public_metadata: Option<Metadata> = may_load(&pub_store, &token_key)?;
+        // get the private metadata if it is not sealed and if the viewer is permitted
+        let mut display_private_metadata_error = None;
+        let private_metadata = if !permit_private_metadata_permission && !private_metadata_is_public
+        {
+            display_private_metadata_error = Some(format!(
+                "Owner or Metadata permissions are required for this SNIP-721 query, got permissions {:?}", permissions_for_errors
+            ));
+            None
+        } else if let Err(err) = check_perm_core(
+            deps,
+            block,
+            &token,
+            &id,
+            opt_viewer,
+            owner_slice,
+            perm_type_info.view_meta_idx,
+            &mut meta_oper_for,
+            &err_msg,
+        ) {
+            if let StdError::GenericErr { msg, .. } = err {
+                display_private_metadata_error = Some(msg);
+            }
+            None
+        } else if !token.unwrapped {
+            display_private_metadata_error = Some(format!(
+                "Sealed metadata of token {} must be unwrapped by calling Reveal before it can be viewed", &id
+            ));
+            None
+        } else {
+            let priv_meta: Option<Metadata> = may_load(&priv_store, &token_key)?;
+            priv_meta
+        };
+        // get the royalty information if present
+        let may_roy_inf: Option<StoredRoyaltyInfo> = may_load(&roy_store, &token_key)?;
+        let royalty_info = may_roy_inf
+            .map(|r| {
+                let hide_addr = !permit_full_owner_permission
+                    || check_perm_core(
+                        deps,
+                        block,
+                        &token,
+                        &id,
+                        opt_viewer,
+                        owner_slice,
+                        perm_type_info.transfer_idx,
+                        &mut xfer_oper_for,
+                        &err_msg,
+                    )
+                    .is_err();
+                r.to_human(deps.api, hide_addr)
+            })
+            .transpose()?;
+        // get the mint run information
+        let mint_run: StoredMintRunInfo = load(&run_store, &token_key)?;
+
         dossiers.push(BatchNftDossierElement {
+            // public
             token_id: id,
+            // if permit has ViewOwner or Owner permissions
+            // or if ownership is public
             owner,
+            // public
             public_metadata,
+            // if permit has Owner or Metadata permissions
+            // or if metadata is already public
+            // and if the metadata is not sealed
             private_metadata,
+            // public but address be hidden if permit doesn't have Owner permission
+            // or if the creator of the permit does not have the Transfer permission
             royalty_info,
+            // public
             mint_run_info: Some(mint_run.to_human(deps.api, contract_creator.clone())?),
+            // public
             transferable: token.transferable,
+            // public
             unwrapped: token.unwrapped,
+            // public if applicable
             display_private_metadata_error,
+            // public
             owner_is_public,
+            // public
             public_ownership_expiration,
+            // public
             private_metadata_is_public,
+            // public
             private_metadata_is_public_expiration,
-            token_approvals,
-            inventory_approvals,
+            // permit needs owner permission
+            token_approvals: token_approvals.filter(|_| permit_full_owner_permission),
+            // permit needs owner permission
+            inventory_approvals: inventory_approvals.filter(|_| permit_full_owner_permission),
         });
     }
     Ok(dossiers)

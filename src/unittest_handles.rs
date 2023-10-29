@@ -11949,6 +11949,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12006,6 +12007,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             true,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12027,6 +12029,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             true,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12057,6 +12060,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
         // test public approval when no address is given
@@ -12070,6 +12074,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12086,6 +12091,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12114,6 +12120,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
         // test public approval when no address is given
@@ -12127,6 +12134,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12146,6 +12154,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12159,6 +12168,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12197,6 +12207,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
         let check_perm = check_permission(
@@ -12209,6 +12220,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12229,6 +12241,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("Access to token NFT2 has expired"));
@@ -12244,6 +12257,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12275,6 +12289,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12288,6 +12303,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12307,6 +12323,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("Access to all tokens of alice has expired"));
@@ -12398,6 +12415,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12447,6 +12465,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12496,6 +12515,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12545,6 +12565,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12637,6 +12658,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         let error = extract_error_msg(check_perm);
         assert!(error.contains("not approved"));
@@ -12650,6 +12672,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
         let check_perm = check_permission(
@@ -12662,6 +12685,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12681,6 +12705,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
         let check_perm = check_permission(
@@ -12693,6 +12718,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
 
@@ -12739,6 +12765,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
         let check_perm = check_permission(
@@ -12751,6 +12778,7 @@ mod tests {
             &mut Vec::new(),
             "not approved",
             false,
+            None,
         );
         assert!(check_perm.is_ok());
     }
